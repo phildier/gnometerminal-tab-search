@@ -28,7 +28,7 @@ A keyboard-triggered fuzzy tab switcher for GNOME Terminal. Press a hotkey from 
 Clone the repository and run the installer. The installer installs apt dependencies and registers the GNOME keyboard shortcut via `gsettings` (persists across reboots via dconf).
 
 ```bash
-git clone https://github.com/your-username/gnometerminal-tab-search.git
+git clone https://github.com/phildier/gnometerminal-tab-search.git
 cd gnometerminal-tab-search
 ./install.sh              # default keybinding: Super+F8
 ./install.sh '<Super>F9'  # custom keybinding
