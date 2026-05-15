@@ -1,6 +1,6 @@
 # gnometerminal-tab-search
 
-A keyboard-triggered fuzzy tab switcher for GNOME Terminal. Press a hotkey from anywhere on the desktop and a rofi fuzzy-search popup lists every open GNOME Terminal tab by title. Type to filter, press Enter to jump to the selected tab.
+A keyboard-triggered fuzzy tab switcher + directory launcher for GNOME Terminal. Press a hotkey from anywhere on the desktop and one rofi fuzzy-search popup lists open GNOME Terminal tabs plus unopened first-level directories from `~/pmg` and `~/projects`.
 
 ## How it works
 
@@ -8,9 +8,15 @@ A keyboard-triggered fuzzy tab switcher for GNOME Terminal. Press a hotkey from 
 
 **Tab switching** — a `gdbus call` on `org.gtk.Actions.SetState` with the `active-tab` action and an integer index, targeting `/org/gnome/Terminal/window/1`.
 
+**Directory discovery** — immediate child directories from `~/pmg` and `~/projects` are added to the picker when they are not already open as tabs.
+
+**Directory launch** — when a directory is selected, the script harvests `GNOME_TERMINAL_SERVICE` and `GNOME_TERMINAL_SCREEN` from an existing GNOME Terminal child process and uses them to remote `gnome-terminal --tab --working-directory=...` into the running terminal server. If no terminal process is available, it falls back to opening a new window.
+
 **Window focus** — `xdotool search --class gnome-terminal-server windowactivate --sync`.
 
 **Multi-window support** — when more than one GNOME Terminal window is open, tab names are prefixed with `[window-title]` to disambiguate.
+
+**Dedupe + precedence** — if a directory name exactly matches an open tab title, only the tab is shown. If both `~/pmg/<name>` and `~/projects/<name>` exist, `~/pmg/<name>` wins.
 
 **Python version detection** — the `tab-search` shell wrapper iterates candidate Python binaries (PATH-based names first, then absolute `/usr/bin/python3.x` paths as a fallback) to find one that can `import gi`. This handles systems where asdf/pyenv shims shadow the system Python that has `python3-gi` installed. If no suitable Python is found, the script prints a fix hint and exits with a non-zero status.
 
@@ -62,7 +68,8 @@ gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/or
 | File | Purpose |
 |---|---|
 | `tab-search` | Shell wrapper — entry point, finds a Python with `gi` available |
-| `tab-search.py` | Python logic — AT-SPI tab enumeration, rofi picker, DBus switch |
+| `tab-search.py` | Runtime logic — AT-SPI tab enumeration, rofi picker, tab switching, directory launching |
+| `tab_search_core.py` | Core data model and merge/launch helpers |
 | `install.sh` | Installs apt dependencies and registers the GNOME keyboard shortcut |
 
 ## Usage without install.sh

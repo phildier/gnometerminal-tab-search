@@ -1,11 +1,24 @@
-"""Fuzzy tab switcher for GNOME Terminal."""
+"""Fuzzy tab switcher + directory launcher for GNOME Terminal."""
 
+import html
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import gi
 gi.require_version('Atspi', '2.0')
 from gi.repository import Atspi
+
+from tab_search_core import (
+    TabEntry,
+    build_gnome_terminal_commands,
+    build_picker_entries,
+    build_terminal_launch_env,
+    command_result_is_success,
+    discover_first_level_directories,
+    pick_remote_terminal_env,
+)
 
 
 def find_role(node, role, depth=10):
@@ -26,7 +39,7 @@ def find_role(node, role, depth=10):
 
 
 def get_tabs():
-    """Return list of (display_name, tab_index, dbus_window_path) tuples."""
+    """Return list of open GNOME Terminal tabs."""
     Atspi.init()
     desktop = Atspi.get_desktop(0)
 
@@ -52,7 +65,14 @@ def get_tabs():
             if tab:
                 name = tab.get_name()
                 display = f'[{win_name}] {name}' if multi_window else name
-                tabs.append((display, tab_idx, dbus_window))
+                tabs.append(
+                    TabEntry(
+                        display_name=display,
+                        raw_name=name,
+                        tab_index=tab_idx,
+                        dbus_window=dbus_window,
+                    )
+                )
 
     return tabs
 
@@ -73,15 +93,130 @@ def switch_tab(dbus_window, tab_index):
     )
 
 
+def get_terminal_server_pids():
+    result = subprocess.run(
+        ['pgrep', '-fa', 'gnome-terminal-server'],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+
+    pids = []
+    for line in result.stdout.splitlines():
+        parts = line.split(None, 1)
+        if parts:
+            pids.append(int(parts[0]))
+    return pids
+
+
+def get_process_table():
+    result = subprocess.run(
+        ['ps', '-eo', 'pid=,ppid='],
+        capture_output=True,
+        text=True,
+    )
+    table = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            table[int(parts[0])] = int(parts[1])
+    return table
+
+
+def get_descendant_pids(root_pids, process_table):
+    children_by_parent = {}
+    for pid, parent_pid in process_table.items():
+        children_by_parent.setdefault(parent_pid, []).append(pid)
+
+    descendants = []
+    stack = list(root_pids)
+    seen = set()
+    while stack:
+        pid = stack.pop()
+        for child_pid in children_by_parent.get(pid, []):
+            if child_pid in seen:
+                continue
+            seen.add(child_pid)
+            descendants.append(child_pid)
+            stack.append(child_pid)
+
+    return descendants
+
+
+def read_process_environment(pid):
+    try:
+        raw = Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+    except OSError:
+        return None
+
+    environment = {}
+    for item in raw:
+        if b'=' not in item:
+            continue
+        key, value = item.split(b'=', 1)
+        environment[key.decode(errors='ignore')] = value.decode(errors='ignore')
+    return environment
+
+
+def get_terminal_child_environments():
+    server_pids = get_terminal_server_pids()
+    if not server_pids:
+        return []
+
+    process_table = get_process_table()
+    descendant_pids = sorted(get_descendant_pids(server_pids, process_table))
+
+    environments = []
+    for pid in descendant_pids:
+        environment = read_process_environment(pid)
+        if environment:
+            environments.append(environment)
+    return environments
+
+
+def open_directory_in_terminal(directory):
+    base_env = build_terminal_launch_env(os.environ)
+    remote_terminal_env = pick_remote_terminal_env(get_terminal_child_environments())
+    commands = build_gnome_terminal_commands(directory)
+
+    attempts = []
+    if remote_terminal_env:
+        attempts.append((commands[0], build_terminal_launch_env(os.environ, remote_terminal_env)))
+    attempts.append((commands[1], base_env))
+
+    errors = []
+    for command, environment in attempts:
+        result = subprocess.run(command, capture_output=True, text=True, env=environment)
+        if command_result_is_success(result.returncode, result.stderr):
+            return
+        errors.append(result.stderr.strip() or f"command failed: {' '.join(command)}")
+
+    sys.exit(f"Could not open directory '{directory}': {'; '.join(errors)}")
+
+
+def rofi_row_text(entry):
+    text = html.escape(entry.display_name)
+    if entry.kind == 'tab':
+        return f"<span weight='bold'>{text}</span>"
+    return text
+
+
 def main():
-    tabs = get_tabs()
-    if not tabs:
-        sys.exit('No GNOME Terminal tabs found.')
+    try:
+        tabs = get_tabs()
+    except Exception:
+        tabs = []
+
+    directories = discover_first_level_directories([Path.home() / 'pmg', Path.home() / 'projects'])
+    entries = build_picker_entries(tabs, directories)
+    if not entries:
+        sys.exit('No GNOME Terminal tabs or launchable directories found.')
 
     result = subprocess.run(
         ['rofi', '-dmenu', '-p', 'tab:', '-i', '-format', 'i',
-         '-no-custom', '-matching', 'fuzzy'],
-        input='\n'.join(t[0] for t in tabs),
+         '-no-custom', '-matching', 'fuzzy', '-markup-rows'],
+        input='\n'.join(rofi_row_text(entry) for entry in entries),
         capture_output=True,
         text=True,
     )
@@ -89,8 +224,16 @@ def main():
     if result.returncode != 0 or not result.stdout.strip():
         sys.exit(0)
 
-    display, tab_index, dbus_window = tabs[int(result.stdout.strip())]
-    switch_tab(dbus_window, tab_index)
+    entry = entries[int(result.stdout.strip())]
+    if entry.kind == 'tab':
+        switch_tab(entry.tab.dbus_window, entry.tab.tab_index)
+        return
+
+    if entry.kind == 'directory-to-open':
+        open_directory_in_terminal(entry.directory.path)
+        return
+
+    sys.exit(f'Unsupported picker entry type: {entry.kind}')
 
 
 if __name__ == '__main__':
