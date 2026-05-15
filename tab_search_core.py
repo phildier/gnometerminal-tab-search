@@ -94,6 +94,18 @@ def build_gnome_terminal_commands(directory: Path) -> list[list[str]]:
     ]
 
 
+def pick_focus_window_id(candidates: list[tuple[str, str]]) -> str | None:
+    """Pick the visible top-level GNOME Terminal window when possible."""
+    for window_id, wm_class in candidates:
+        if '"Gnome-terminal"' in wm_class:
+            return window_id
+
+    if candidates:
+        return candidates[0][0]
+
+    return None
+
+
 def command_result_is_success(returncode: int, stderr: str) -> bool:
     """Treat GNOME Terminal's screen lookup error as a launch failure."""
     return returncode == 0 and "Error creating terminal" not in stderr

@@ -17,6 +17,7 @@ from tab_search_core import (
     build_terminal_launch_env,
     command_result_is_success,
     discover_first_level_directories,
+    pick_focus_window_id,
     pick_remote_terminal_env,
 )
 
@@ -86,9 +87,35 @@ def switch_tab(dbus_window, tab_index):
         'active-tab', f'<int32 {tab_index}>', '{}',
     ], capture_output=True)
 
+    focus_terminal_window()
+
+
+def focus_terminal_window():
+    search_result = subprocess.run(
+        ['xdotool', 'search', '--class', 'Gnome-terminal'],
+        capture_output=True,
+        text=True,
+    )
+    if search_result.returncode != 0:
+        return
+
+    candidates = []
+    for window_id in search_result.stdout.splitlines():
+        if not window_id.strip():
+            continue
+        class_result = subprocess.run(
+            ['xprop', '-id', window_id, 'WM_CLASS'],
+            capture_output=True,
+            text=True,
+        )
+        candidates.append((window_id, class_result.stdout.strip()))
+
+    focus_window_id = pick_focus_window_id(candidates)
+    if not focus_window_id:
+        return
+
     subprocess.run(
-        ['xdotool', 'search', '--class', 'gnome-terminal-server',
-         'windowactivate', '--sync'],
+        ['xdotool', 'windowactivate', '--sync', focus_window_id],
         capture_output=True,
     )
 
@@ -189,6 +216,7 @@ def open_directory_in_terminal(directory):
     for command, environment in attempts:
         result = subprocess.run(command, capture_output=True, text=True, env=environment)
         if command_result_is_success(result.returncode, result.stderr):
+            focus_terminal_window()
             return
         errors.append(result.stderr.strip() or f"command failed: {' '.join(command)}")
 

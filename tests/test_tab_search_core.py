@@ -10,6 +10,7 @@ from tab_search_core import (
     build_picker_entries,
     command_result_is_success,
     discover_first_level_directories,
+    pick_focus_window_id,
     pick_remote_terminal_env,
 )
 
@@ -123,6 +124,16 @@ class LaunchHelperTests(unittest.TestCase):
                 ["gnome-terminal", "--working-directory=/tmp/work"],
             ],
         )
+
+    def test_pick_focus_window_id_prefers_visible_terminal_class(self):
+        window_id = pick_focus_window_id(
+            [
+                ("96468993", 'WM_CLASS(STRING) = "gnome-terminal-server", "Gnome-terminal-server"'),
+                ("96469002", 'WM_CLASS(STRING) = "gnome-terminal-server", "Gnome-terminal"'),
+            ]
+        )
+
+        self.assertEqual(window_id, "96469002")
 
 
 if __name__ == "__main__":
