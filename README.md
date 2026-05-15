@@ -8,15 +8,37 @@ A keyboard-triggered fuzzy tab switcher + directory launcher for GNOME Terminal.
 
 **Tab switching** — a `gdbus call` on `org.gtk.Actions.SetState` with the `active-tab` action and an integer index, targeting `/org/gnome/Terminal/window/1`.
 
-**Directory discovery** — immediate child directories from `~/pmg` and `~/projects` are added to the picker when they are not already open as tabs.
+**Directory discovery** — when `~/.config/gnometerminal-tab-search/config.toml` exists, immediate child directories from the configured roots are added to the picker when they are not already open as tabs.
 
-**Directory launch** — when a directory is selected, the script harvests `GNOME_TERMINAL_SERVICE` and `GNOME_TERMINAL_SCREEN` from an existing GNOME Terminal child process and uses them to remote `gnome-terminal --tab --working-directory=...` into the running terminal server. If no terminal process is available, it falls back to opening a new window.
+**Directory launch** — when a directory is selected, the script harvests `GNOME_TERMINAL_SERVICE` and `GNOME_TERMINAL_SCREEN` from an existing GNOME Terminal child process and uses them to remote `gnome-terminal --tab --working-directory=...` into the running terminal server. If a global `post_cd_command` is configured, the launch path switches to `bash -ic` so bash functions sourced by `~/.bashrc` are available. If no terminal process is available, it falls back to opening a new window.
 
 **Window focus** — `xdotool search --class gnome-terminal-server windowactivate --sync`.
 
 **Multi-window support** — when more than one GNOME Terminal window is open, tab names are prefixed with `[window-title]` to disambiguate.
 
-**Dedupe + precedence** — if a directory name exactly matches an open tab title, only the tab is shown. If both `~/pmg/<name>` and `~/projects/<name>` exist, `~/pmg/<name>` wins.
+**Dedupe + precedence** — if a directory name exactly matches an open tab title, only the tab is shown. When multiple configured roots contain the same first-level basename, the earliest root in the config wins.
+
+## Optional config
+
+If `~/.config/gnometerminal-tab-search/config.toml` is missing, the tool behaves as a tab switcher only.
+
+When the config file exists, it becomes the only source of truth for launcher roots:
+
+```toml
+roots = [
+  "~/pmg",
+  "~/projects",
+]
+
+post_cd_command = "my_shell_function"
+```
+
+Rules:
+
+- `roots` is ordered; earlier roots take precedence and later duplicate basenames are dropped.
+- `post_cd_command` is optional.
+- `post_cd_command` is bash-only and is executed after changing into the launched directory.
+- because the command runs through bash, shell functions loaded from `~/.bashrc` are supported.
 
 **Python version detection** — the `tab-search` shell wrapper iterates candidate Python binaries (PATH-based names first, then absolute `/usr/bin/python3.x` paths as a fallback) to find one that can `import gi`. This handles systems where asdf/pyenv shims shadow the system Python that has `python3-gi` installed. If no suitable Python is found, the script prints a fix hint and exits with a non-zero status.
 

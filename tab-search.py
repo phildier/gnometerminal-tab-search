@@ -11,12 +11,15 @@ gi.require_version('Atspi', '2.0')
 from gi.repository import Atspi
 
 from tab_search_core import (
+    ConfigError,
+    LauncherConfig,
     TabEntry,
     build_gnome_terminal_commands,
     build_picker_entries,
     build_terminal_launch_env,
     command_result_is_success,
     discover_first_level_directories,
+    load_launcher_config,
     pick_focus_window_id,
     pick_remote_terminal_env,
 )
@@ -202,10 +205,10 @@ def get_terminal_child_environments():
     return environments
 
 
-def open_directory_in_terminal(directory):
+def open_directory_in_terminal(directory, post_cd_command=None):
     base_env = build_terminal_launch_env(os.environ)
     remote_terminal_env = pick_remote_terminal_env(get_terminal_child_environments())
-    commands = build_gnome_terminal_commands(directory)
+    commands = build_gnome_terminal_commands(directory, post_cd_command)
 
     attempts = []
     if remote_terminal_env:
@@ -236,9 +239,20 @@ def main():
     except Exception:
         tabs = []
 
-    directories = discover_first_level_directories([Path.home() / 'pmg', Path.home() / 'projects'])
+    config_path = Path.home() / '.config' / 'gnometerminal-tab-search' / 'config.toml'
+    try:
+        launcher_config = load_launcher_config(config_path)
+    except ConfigError as exc:
+        sys.exit(f"Invalid config at '{config_path}': {exc}")
+
+    directories = []
+    if launcher_config is not None:
+        directories = discover_first_level_directories(launcher_config.roots)
+
     entries = build_picker_entries(tabs, directories)
     if not entries:
+        if launcher_config is None:
+            sys.exit('No GNOME Terminal tabs found.')
         sys.exit('No GNOME Terminal tabs or launchable directories found.')
 
     result = subprocess.run(
@@ -258,7 +272,8 @@ def main():
         return
 
     if entry.kind == 'directory-to-open':
-        open_directory_in_terminal(entry.directory.path)
+        post_cd_command = launcher_config.post_cd_command if launcher_config is not None else None
+        open_directory_in_terminal(entry.directory.path, post_cd_command)
         return
 
     sys.exit(f'Unsupported picker entry type: {entry.kind}')

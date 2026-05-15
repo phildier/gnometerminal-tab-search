@@ -3,13 +3,16 @@ import unittest
 from pathlib import Path
 
 from tab_search_core import (
+    ConfigError,
     DirectoryEntry,
+    LauncherConfig,
     TabEntry,
     build_gnome_terminal_commands,
     build_terminal_launch_env,
     build_picker_entries,
     command_result_is_success,
     discover_first_level_directories,
+    load_launcher_config,
     pick_focus_window_id,
     pick_remote_terminal_env,
 )
@@ -125,6 +128,30 @@ class LaunchHelperTests(unittest.TestCase):
             ],
         )
 
+    def test_build_gnome_terminal_commands_with_post_command_uses_bash(self):
+        commands = build_gnome_terminal_commands(Path("/tmp/work"), "my_function")
+
+        self.assertEqual(
+            commands,
+            [
+                [
+                    "gnome-terminal",
+                    "--tab",
+                    "--",
+                    "bash",
+                    "-ic",
+                    "cd -- /tmp/work || exit 1; my_function; exec bash -i",
+                ],
+                [
+                    "gnome-terminal",
+                    "--",
+                    "bash",
+                    "-ic",
+                    "cd -- /tmp/work || exit 1; my_function; exec bash -i",
+                ],
+            ],
+        )
+
     def test_pick_focus_window_id_prefers_visible_terminal_class(self):
         window_id = pick_focus_window_id(
             [
@@ -134,6 +161,45 @@ class LaunchHelperTests(unittest.TestCase):
         )
 
         self.assertEqual(window_id, "96469002")
+
+
+class ConfigTests(unittest.TestCase):
+    def test_missing_config_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = load_launcher_config(Path(tmp) / "config.toml")
+
+        self.assertIsNone(config)
+
+    def test_load_launcher_config_reads_roots_and_post_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "pmg"
+            second = root / "projects"
+            first.mkdir()
+            second.mkdir()
+            config_path = root / "config.toml"
+            config_path.write_text(
+                f'roots = ["{first}", "{second}"]\npost_cd_command = "my_function"\n',
+                encoding="utf-8",
+            )
+
+            config = load_launcher_config(config_path)
+
+        self.assertEqual(
+            config,
+            LauncherConfig(
+                roots=[first, second],
+                post_cd_command="my_function",
+            ),
+        )
+
+    def test_load_launcher_config_rejects_invalid_roots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('roots = []\n', encoding="utf-8")
+
+            with self.assertRaises(ConfigError):
+                load_launcher_config(config_path)
 
 
 if __name__ == "__main__":

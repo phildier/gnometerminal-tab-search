@@ -2,6 +2,12 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised only on older Python versions
+    tomllib = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +32,16 @@ class PickerEntry:
     directory: DirectoryEntry | None = None
 
 
+@dataclass(frozen=True)
+class LauncherConfig:
+    roots: list[Path]
+    post_cd_command: str | None = None
+
+
+class ConfigError(ValueError):
+    """Raised when the launcher config exists but is invalid."""
+
+
 def discover_first_level_directories(roots: list[Path]) -> list[DirectoryEntry]:
     """Discover first-level directories with root-order precedence."""
     chosen: dict[str, DirectoryEntry] = {}
@@ -40,6 +56,37 @@ def discover_first_level_directories(roots: list[Path]) -> list[DirectoryEntry]:
             chosen[child.name] = DirectoryEntry(name=child.name, path=child)
 
     return list(chosen.values())
+
+
+def load_launcher_config(config_path: Path) -> LauncherConfig | None:
+    """Load launcher config when present, or return None when absent."""
+    if not config_path.exists():
+        return None
+
+    if tomllib is None:
+        raise ConfigError("Config parsing requires Python 3.11+.")
+
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"Invalid config TOML: {exc}") from exc
+
+    roots_value = data.get("roots")
+    if not isinstance(roots_value, list) or not roots_value or not all(isinstance(item, str) for item in roots_value):
+        raise ConfigError("Config 'roots' must be a non-empty list of directory strings.")
+
+    roots = []
+    for root_value in roots_value:
+        root_path = Path(root_value).expanduser()
+        if not root_path.is_dir():
+            raise ConfigError(f"Configured root is not a directory: {root_value}")
+        roots.append(root_path)
+
+    post_cd_command = data.get("post_cd_command")
+    if post_cd_command is not None and not isinstance(post_cd_command, str):
+        raise ConfigError("Config 'post_cd_command' must be a string.")
+
+    return LauncherConfig(roots=roots, post_cd_command=post_cd_command)
 
 
 def build_picker_entries(tabs: list[TabEntry], directories: list[DirectoryEntry]) -> list[PickerEntry]:
@@ -85,8 +132,15 @@ def build_terminal_launch_env(
     return launch_env
 
 
-def build_gnome_terminal_commands(directory: Path) -> list[list[str]]:
+def build_gnome_terminal_commands(directory: Path, post_cd_command: str | None = None) -> list[list[str]]:
     """Build launch commands in preferred order."""
+    if post_cd_command:
+        script = f"cd -- {shlex.quote(str(directory))} || exit 1; {post_cd_command}; exec bash -i"
+        return [
+            ["gnome-terminal", "--tab", "--", "bash", "-ic", script],
+            ["gnome-terminal", "--", "bash", "-ic", script],
+        ]
+
     working_directory = f"--working-directory={directory}"
     return [
         ["gnome-terminal", "--tab", working_directory],
