@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from tab_search_core import (
     TabEntry,
     assign_dbus_window_paths,
+    build_ghostty_launch_command,
     build_gnome_terminal_commands,
     build_terminal_launch_env,
     collect_ghostty_surfaces,
@@ -225,6 +226,13 @@ class GhosttyBackend:
             f'[<uint64 {tab.surface_id}>]',
             '{}',
         ], capture_output=True)
+
+    def open_directory(self, directory, post_cd_command=None):
+        command = build_ghostty_launch_command(directory, post_cd_command)
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            error = result.stderr.strip() or f"command failed: {' '.join(command)}"
+            sys.exit(f"Could not open directory '{directory}': {error}")
 
     def _find_ghostty_app(self):
         Atspi.init()

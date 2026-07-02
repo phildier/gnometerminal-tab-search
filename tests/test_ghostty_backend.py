@@ -181,5 +181,62 @@ class GhosttySwitchTabTests(unittest.TestCase):
         )
 
 
+class GhosttyOpenDirectoryTests(unittest.TestCase):
+    def test_open_directory_uses_new_window_ipc(self):
+        backends = load_backends()
+        backend = backends.GhosttyBackend()
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            backend.open_directory(Path("/tmp/work"))
+
+        self.assertEqual(
+            calls[0],
+            ["ghostty", "+new-window", "--working-directory=/tmp/work"],
+        )
+
+    def test_open_directory_with_post_command_uses_bash(self):
+        backends = load_backends()
+        backend = backends.GhosttyBackend()
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            backend.open_directory(Path("/tmp/work"), "my_function")
+
+        self.assertEqual(
+            calls[0],
+            [
+                "ghostty",
+                "+new-window",
+                "-e",
+                "bash",
+                "-ic",
+                "cd -- /tmp/work || exit 1; my_function; exec bash -i",
+            ],
+        )
+
+    def test_open_directory_exits_with_stderr_on_failure(self):
+        backends = load_backends()
+        backend = backends.GhosttyBackend()
+
+        def fake_run(command, **kwargs):
+            return types.SimpleNamespace(returncode=1, stdout="", stderr="boom\n")
+
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            with self.assertRaises(SystemExit) as ctx:
+                backend.open_directory(Path("/tmp/work"))
+
+        self.assertIn("boom", str(ctx.exception))
+        self.assertIn("/tmp/work", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
