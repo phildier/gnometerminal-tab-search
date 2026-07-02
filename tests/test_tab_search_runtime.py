@@ -188,6 +188,35 @@ class MainFlowTests(unittest.TestCase):
         discover_directories.assert_called_once_with(config.roots)
 
 
+class CreateBackendTests(unittest.TestCase):
+    def test_no_config_uses_gnome_terminal(self):
+        backends, module = load_modules()
+
+        backend = module.create_backend(None)
+
+        self.assertIsInstance(backend, backends.GnomeTerminalBackend)
+
+    def test_gnome_terminal_config_uses_gnome_terminal(self):
+        from tab_search_core import LauncherConfig
+
+        backends, module = load_modules()
+        config = LauncherConfig(roots=[Path("/tmp")], terminal="gnome-terminal")
+
+        backend = module.create_backend(config)
+
+        self.assertIsInstance(backend, backends.GnomeTerminalBackend)
+
+    def test_ghostty_config_uses_ghostty(self):
+        from tab_search_core import LauncherConfig
+
+        backends, module = load_modules()
+        config = LauncherConfig(roots=[Path("/tmp")], terminal="ghostty")
+
+        backend = module.create_backend(config)
+
+        self.assertIsInstance(backend, backends.GhosttyBackend)
+
+
 def module_tab_entry(module, name):
     from tab_search_core import TabEntry
 

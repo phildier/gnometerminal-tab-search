@@ -11,10 +11,12 @@ from tab_search_core import (
     discover_first_level_directories,
     load_launcher_config,
 )
-from terminal_backends import GnomeTerminalBackend
+from terminal_backends import GhosttyBackend, GnomeTerminalBackend
 
 
 def create_backend(launcher_config):
+    if launcher_config is not None and launcher_config.terminal == 'ghostty':
+        return GhosttyBackend()
     return GnomeTerminalBackend()
 
 
