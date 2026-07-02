@@ -5,15 +5,19 @@ from pathlib import Path
 from tab_search_core import (
     ConfigError,
     DirectoryEntry,
+    GhosttySurface,
     LauncherConfig,
     TabEntry,
     assign_dbus_window_paths,
+    build_ghostty_launch_command,
     build_gnome_terminal_commands,
     build_terminal_launch_env,
     build_picker_entries,
+    collect_ghostty_surfaces,
     command_result_is_success,
     discover_first_level_directories,
     load_launcher_config,
+    match_tab_to_surface,
     parse_dbus_window_numbers,
     pick_focus_window_id,
     pick_remote_terminal_env,
@@ -163,6 +167,81 @@ class LaunchHelperTests(unittest.TestCase):
         )
 
         self.assertEqual(window_id, "96469002")
+
+
+class GhosttyHelperTests(unittest.TestCase):
+    def test_build_ghostty_launch_command_uses_new_window_ipc(self):
+        command = build_ghostty_launch_command(Path("/tmp/work"))
+
+        self.assertEqual(
+            command,
+            ["ghostty", "+new-window", "--working-directory=/tmp/work"],
+        )
+
+    def test_build_ghostty_launch_command_with_post_command_uses_bash(self):
+        command = build_ghostty_launch_command(Path("/tmp/work"), "my_function")
+
+        self.assertEqual(
+            command,
+            [
+                "ghostty",
+                "+new-window",
+                "-e",
+                "bash",
+                "-ic",
+                "cd -- /tmp/work || exit 1; my_function; exec bash -i",
+            ],
+        )
+
+    def test_collect_ghostty_surfaces_parses_hex_ids_and_pwd(self):
+        surfaces = collect_ghostty_surfaces(
+            [
+                {"PATH": "/usr/bin"},
+                {
+                    "GHOSTTY_SURFACE_ID": "0x75bd149c639f7650",
+                    "PWD": "/home/phil/projects/gnometerminal-tab-search",
+                },
+                {
+                    "GHOSTTY_SURFACE_ID": "not-hex",
+                    "PWD": "/tmp",
+                },
+            ]
+        )
+
+        self.assertEqual(
+            surfaces,
+            [
+                GhosttySurface(
+                    surface_id=0x75BD149C639F7650,
+                    pwd="/home/phil/projects/gnometerminal-tab-search",
+                )
+            ],
+        )
+
+    def test_collect_ghostty_surfaces_deduplicates_by_surface_id(self):
+        surfaces = collect_ghostty_surfaces(
+            [
+                {"GHOSTTY_SURFACE_ID": "0x1", "PWD": "/tmp/one"},
+                {"GHOSTTY_SURFACE_ID": "0x1", "PWD": "/tmp/one/nested"},
+            ]
+        )
+
+        self.assertEqual(len(surfaces), 1)
+        self.assertEqual(surfaces[0].pwd, "/tmp/one")
+
+    def test_match_tab_to_surface_expands_tilde_in_tab_title(self):
+        surfaces = [
+            GhosttySurface(surface_id=0x1, pwd=str(Path.home() / "projects" / "alpha")),
+            GhosttySurface(surface_id=0x2, pwd="/srv/data"),
+        ]
+
+        self.assertEqual(match_tab_to_surface("~/projects/alpha", surfaces), 0x1)
+        self.assertEqual(match_tab_to_surface("/srv/data", surfaces), 0x2)
+
+    def test_match_tab_to_surface_returns_none_when_no_match(self):
+        surfaces = [GhosttySurface(surface_id=0x1, pwd="/tmp/one")]
+
+        self.assertIsNone(match_tab_to_surface("~/other", surfaces))
 
 
 class DbusWindowMappingTests(unittest.TestCase):

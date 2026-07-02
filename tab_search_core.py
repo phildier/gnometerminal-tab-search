@@ -146,10 +146,15 @@ def build_terminal_launch_env(
     return launch_env
 
 
+def build_cd_script(directory: Path, post_cd_command: str) -> str:
+    """Build the bash script used to open a shell in a directory with a post command."""
+    return f"cd -- {shlex.quote(str(directory))} || exit 1; {post_cd_command}; exec bash -i"
+
+
 def build_gnome_terminal_commands(directory: Path, post_cd_command: str | None = None) -> list[list[str]]:
     """Build launch commands in preferred order."""
     if post_cd_command:
-        script = f"cd -- {shlex.quote(str(directory))} || exit 1; {post_cd_command}; exec bash -i"
+        script = build_cd_script(directory, post_cd_command)
         return [
             ["gnome-terminal", "--tab", "--", "bash", "-ic", script],
             ["gnome-terminal", "--", "bash", "-ic", script],
@@ -160,6 +165,47 @@ def build_gnome_terminal_commands(directory: Path, post_cd_command: str | None =
         ["gnome-terminal", "--tab", working_directory],
         ["gnome-terminal", working_directory],
     ]
+
+
+def build_ghostty_launch_command(directory: Path, post_cd_command: str | None = None) -> list[str]:
+    """Build the Ghostty new-window IPC launch command."""
+    if post_cd_command:
+        script = build_cd_script(directory, post_cd_command)
+        return ["ghostty", "+new-window", "-e", "bash", "-ic", script]
+
+    return ["ghostty", "+new-window", f"--working-directory={directory}"]
+
+
+@dataclass(frozen=True)
+class GhosttySurface:
+    surface_id: int
+    pwd: str
+
+
+def collect_ghostty_surfaces(environments: list[dict[str, str]]) -> list[GhosttySurface]:
+    """Extract unique Ghostty surfaces from harvested process environments."""
+    surfaces: dict[int, GhosttySurface] = {}
+    for environment in environments:
+        raw_id = environment.get("GHOSTTY_SURFACE_ID")
+        pwd = environment.get("PWD")
+        if not raw_id or not pwd:
+            continue
+        try:
+            surface_id = int(raw_id, 16)
+        except ValueError:
+            continue
+        if surface_id not in surfaces:
+            surfaces[surface_id] = GhosttySurface(surface_id=surface_id, pwd=pwd)
+    return list(surfaces.values())
+
+
+def match_tab_to_surface(tab_name: str, surfaces: list[GhosttySurface]) -> int | None:
+    """Match an AT-SPI tab title (may abbreviate home as ~) to a surface ID."""
+    tab_path = str(Path(tab_name).expanduser())
+    for surface in surfaces:
+        if surface.pwd == tab_path:
+            return surface.surface_id
+    return None
 
 
 def parse_dbus_window_numbers(introspection_xml: str) -> list[int]:
