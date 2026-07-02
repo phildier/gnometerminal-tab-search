@@ -179,23 +179,32 @@ def build_ghostty_launch_command(directory: Path, post_cd_command: str | None = 
 @dataclass(frozen=True)
 class GhosttySurface:
     surface_id: int
-    pwd: str
+    cwd: str
 
 
-def collect_ghostty_surfaces(environments: list[dict[str, str]]) -> list[GhosttySurface]:
-    """Extract unique Ghostty surfaces from harvested process environments."""
+def collect_ghostty_surfaces(
+    processes: list[tuple[dict[str, str], str | None]],
+) -> list[GhosttySurface]:
+    """Extract unique Ghostty surfaces from (environment, live cwd) pairs.
+
+    The live cwd (/proc/<pid>/cwd) is required: environ PWD is a stale
+    snapshot from shell startup, while tab titles track the live cwd.
+
+    When several processes share a surface ID (Ghostty's /bin/sh wrapper
+    plus the interactive shell under it), the last one wins: input is
+    ordered ancestors-first, and only the deepest process tracks the live
+    cwd that tab titles follow.
+    """
     surfaces: dict[int, GhosttySurface] = {}
-    for environment in environments:
+    for environment, cwd in processes:
         raw_id = environment.get("GHOSTTY_SURFACE_ID")
-        pwd = environment.get("PWD")
-        if not raw_id or not pwd:
+        if not raw_id or not cwd:
             continue
         try:
             surface_id = int(raw_id, 16)
         except ValueError:
             continue
-        if surface_id not in surfaces:
-            surfaces[surface_id] = GhosttySurface(surface_id=surface_id, pwd=pwd)
+        surfaces[surface_id] = GhosttySurface(surface_id=surface_id, cwd=cwd)
     return list(surfaces.values())
 
 
@@ -203,7 +212,7 @@ def match_tab_to_surface(tab_name: str, surfaces: list[GhosttySurface]) -> int |
     """Match an AT-SPI tab title (may abbreviate home as ~) to a surface ID."""
     tab_path = str(Path(tab_name).expanduser())
     for surface in surfaces:
-        if surface.pwd == tab_path:
+        if surface.cwd == tab_path:
             return surface.surface_id
     return None
 

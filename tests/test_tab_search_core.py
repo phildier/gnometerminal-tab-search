@@ -193,18 +193,22 @@ class GhosttyHelperTests(unittest.TestCase):
             ],
         )
 
-    def test_collect_ghostty_surfaces_parses_hex_ids_and_pwd(self):
+    def test_collect_ghostty_surfaces_parses_hex_ids_with_live_cwd(self):
+        # cwd is the *live* working directory (/proc/<pid>/cwd), not environ
+        # PWD, which is a stale snapshot from shell startup and diverges as
+        # soon as the user cd's (tab titles follow the live cwd).
         surfaces = collect_ghostty_surfaces(
             [
-                {"PATH": "/usr/bin"},
-                {
-                    "GHOSTTY_SURFACE_ID": "0x75bd149c639f7650",
-                    "PWD": "/home/phil/projects/gnometerminal-tab-search",
-                },
-                {
-                    "GHOSTTY_SURFACE_ID": "not-hex",
-                    "PWD": "/tmp",
-                },
+                ({"PATH": "/usr/bin"}, "/somewhere"),
+                (
+                    {
+                        "GHOSTTY_SURFACE_ID": "0x75bd149c639f7650",
+                        "PWD": "/stale/startup/dir",
+                    },
+                    "/home/phil/projects/gnometerminal-tab-search",
+                ),
+                ({"GHOSTTY_SURFACE_ID": "not-hex"}, "/tmp"),
+                ({"GHOSTTY_SURFACE_ID": "0x2"}, None),
             ]
         )
 
@@ -213,33 +217,37 @@ class GhosttyHelperTests(unittest.TestCase):
             [
                 GhosttySurface(
                     surface_id=0x75BD149C639F7650,
-                    pwd="/home/phil/projects/gnometerminal-tab-search",
+                    cwd="/home/phil/projects/gnometerminal-tab-search",
                 )
             ],
         )
 
-    def test_collect_ghostty_surfaces_deduplicates_by_surface_id(self):
+    def test_collect_ghostty_surfaces_prefers_deepest_process_per_surface(self):
+        # Ghostty spawns shells via a /bin/sh wrapper whose cwd stays at the
+        # surface's spawn directory; the deeper bash child tracks the live
+        # cwd that tab titles follow. Input is ordered shallow -> deep, so
+        # the last (deepest) process must win.
         surfaces = collect_ghostty_surfaces(
             [
-                {"GHOSTTY_SURFACE_ID": "0x1", "PWD": "/tmp/one"},
-                {"GHOSTTY_SURFACE_ID": "0x1", "PWD": "/tmp/one/nested"},
+                ({"GHOSTTY_SURFACE_ID": "0x1"}, "/spawn/dir"),
+                ({"GHOSTTY_SURFACE_ID": "0x1"}, "/live/dir"),
             ]
         )
 
         self.assertEqual(len(surfaces), 1)
-        self.assertEqual(surfaces[0].pwd, "/tmp/one")
+        self.assertEqual(surfaces[0].cwd, "/live/dir")
 
     def test_match_tab_to_surface_expands_tilde_in_tab_title(self):
         surfaces = [
-            GhosttySurface(surface_id=0x1, pwd=str(Path.home() / "projects" / "alpha")),
-            GhosttySurface(surface_id=0x2, pwd="/srv/data"),
+            GhosttySurface(surface_id=0x1, cwd=str(Path.home() / "projects" / "alpha")),
+            GhosttySurface(surface_id=0x2, cwd="/srv/data"),
         ]
 
         self.assertEqual(match_tab_to_surface("~/projects/alpha", surfaces), 0x1)
         self.assertEqual(match_tab_to_surface("/srv/data", surfaces), 0x2)
 
     def test_match_tab_to_surface_returns_none_when_no_match(self):
-        surfaces = [GhosttySurface(surface_id=0x1, pwd="/tmp/one")]
+        surfaces = [GhosttySurface(surface_id=0x1, cwd="/tmp/one")]
 
         self.assertIsNone(match_tab_to_surface("~/other", surfaces))
 

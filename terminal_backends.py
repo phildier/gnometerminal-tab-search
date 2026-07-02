@@ -16,12 +16,16 @@ import gi
 gi.require_version('Atspi', '2.0')
 from gi.repository import Atspi
 
+from dataclasses import dataclass
+
 from tab_search_core import (
     TabEntry,
     assign_dbus_window_paths,
     build_gnome_terminal_commands,
     build_terminal_launch_env,
+    collect_ghostty_surfaces,
     command_result_is_success,
+    match_tab_to_surface,
     parse_dbus_window_numbers,
     pick_focus_window_id,
     pick_remote_terminal_env,
@@ -113,6 +117,11 @@ def get_pids_matching(pattern):
 
 def get_child_environments(root_pattern):
     """Collect environments of all descendants of processes matching a pattern."""
+    return [environment for environment, _ in get_child_processes(root_pattern)]
+
+
+def get_child_processes(root_pattern):
+    """Collect (environment, live cwd) of descendants of matching processes."""
     root_pids = get_pids_matching(root_pattern)
     if not root_pids:
         return []
@@ -120,12 +129,100 @@ def get_child_environments(root_pattern):
     process_table = get_process_table()
     descendant_pids = sorted(get_descendant_pids(root_pids, process_table))
 
-    environments = []
+    processes = []
     for pid in descendant_pids:
         environment = read_process_environment(pid)
         if environment:
-            environments.append(environment)
-    return environments
+            processes.append((environment, read_process_cwd(pid)))
+    return processes
+
+
+def read_process_cwd(pid):
+    try:
+        return os.readlink(f'/proc/{pid}/cwd')
+    except OSError:
+        return None
+
+
+def find_all_roles(node, role, depth=25):
+    """Collect all descendants (including node) with the given AT-SPI role."""
+    found = []
+    if depth == 0 or node is None:
+        return found
+    try:
+        if node.get_role_name() == role:
+            found.append(node)
+        for i in range(node.get_child_count()):
+            child = node.get_child_at_index(i)
+            if child:
+                found.extend(find_all_roles(child, role, depth - 1))
+    except Exception:
+        pass
+    return found
+
+
+@dataclass(frozen=True)
+class GhosttyTabEntry:
+    display_name: str
+    raw_name: str
+    surface_id: int
+
+
+class GhosttyBackend:
+    """Ghostty: AT-SPI tab listing, present-surface D-Bus switching, +new-window launch.
+
+    Tab switching requires a Ghostty build that exports GHOSTTY_SURFACE_ID
+    into child process environments (HEAD as of 2026-07, newer than 1.3.1).
+    Without it, get_tabs() returns [] and the picker is launcher-only.
+    """
+
+    def get_tabs(self):
+        app = self._find_ghostty_app()
+        if app is None:
+            return []
+
+        surfaces = collect_ghostty_surfaces(get_child_processes('ghostty'))
+        if not surfaces:
+            return []
+
+        frames = find_all_roles(app, 'frame')
+        multi_window = len(frames) > 1
+
+        tabs = []
+        for frame in frames:
+            frame_name = frame.get_name()
+            tab_names = []
+            for tab_list in find_all_roles(frame, 'page tab list'):
+                page_tabs = find_all_roles(tab_list, 'page tab')
+                if page_tabs:
+                    tab_names = [tab.get_name() for tab in page_tabs]
+                    break
+            if not tab_names:
+                tab_names = [frame_name]
+
+            for name in tab_names:
+                surface_id = match_tab_to_surface(name, surfaces)
+                if surface_id is None:
+                    continue
+                display = f'[{frame_name}] {name}' if multi_window else name
+                tabs.append(
+                    GhosttyTabEntry(
+                        display_name=display,
+                        raw_name=name,
+                        surface_id=surface_id,
+                    )
+                )
+
+        return tabs
+
+    def _find_ghostty_app(self):
+        Atspi.init()
+        desktop = Atspi.get_desktop(0)
+        for i in range(desktop.get_child_count()):
+            app = desktop.get_child_at_index(i)
+            if app and (app.get_name() or '') == 'ghostty':
+                return app
+        return None
 
 
 class GnomeTerminalBackend:
