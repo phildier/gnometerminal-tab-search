@@ -1,30 +1,49 @@
 # gnometerminal-tab-search
 
-A keyboard-triggered fuzzy tab switcher + directory launcher for GNOME Terminal. Press a hotkey from anywhere on the desktop and one rofi fuzzy-search popup lists open GNOME Terminal tabs plus unopened first-level directories from `~/pmg` and `~/projects`.
+A keyboard-triggered fuzzy tab switcher + directory launcher for GNOME Terminal and Ghostty. Press a hotkey from anywhere on the desktop and one rofi fuzzy-search popup lists open terminal tabs plus unopened first-level directories from your configured roots.
 
 ## How it works
 
+The terminal backend is selected by the optional `terminal` config key (`gnome-terminal` is the default; `ghostty` is supported).
+
+### GNOME Terminal backend
+
 **Tab enumeration** — GNOME Terminal does not expose tab titles over DBus. The `org.gnome.Terminal.Terminal0` interface has no readable properties for this. The only reliable path is the AT-SPI accessibility tree, read via the Python `gi`/`Atspi` bindings.
 
-**Tab switching** — a `gdbus call` on `org.gtk.Actions.SetState` with the `active-tab` action and an integer index, targeting `/org/gnome/Terminal/window/1`.
-
-**Directory discovery** — when `~/.config/gnometerminal-tab-search/config.toml` exists, immediate child directories from the configured roots are added to the picker when they are not already open as tabs.
+**Tab switching** — a `gdbus call` on `org.gtk.Actions.SetState` with the `active-tab` action and an integer index, targeting the live `/org/gnome/Terminal/window/N` paths discovered via D-Bus introspection (window numbers are never reused after a window closes).
 
 **Directory launch** — when a directory is selected, the script harvests `GNOME_TERMINAL_SERVICE` and `GNOME_TERMINAL_SCREEN` from an existing GNOME Terminal child process and uses them to remote `gnome-terminal --tab --working-directory=...` into the running terminal server. If a global `post_cd_command` is configured, the launch path switches to `bash -ic` so bash functions sourced by `~/.bashrc` are available. If no terminal process is available, it falls back to opening a new window.
 
-**Window focus** — `xdotool search --class gnome-terminal-server windowactivate --sync`.
+**Window focus** — `xdotool search --class Gnome-terminal`, then `xprop` disambiguates the visible top-level window from the server window before `xdotool windowactivate --sync`.
 
-**Multi-window support** — when more than one GNOME Terminal window is open, tab names are prefixed with `[window-title]` to disambiguate.
+### Ghostty backend
+
+**Requires a Ghostty build newer than 1.3.1** (HEAD as of mid-2026): tab switching depends on `GHOSTTY_SURFACE_ID`, which released versions do not yet export. On older builds the picker degrades gracefully to directory launching only.
+
+**Tab enumeration** — AT-SPI, like GNOME Terminal. Windows with a single tab hide the tab bar and are listed by window title instead.
+
+**Tab switching** — Ghostty exposes no tab-switch action over D-Bus, but it has an app-level `present-surface(uint64)` action that raises the window and focuses the surface's tab. Surface IDs are harvested from `GHOSTTY_SURFACE_ID` in `/proc/<pid>/environ` of Ghostty's child shells, and each tab title is matched to a surface by the shell's live working directory (`/proc/<pid>/cwd`).
+
+**Directory launch** — `ghostty +new-window --working-directory=...` (native single-instance IPC; no environment harvesting needed). With a `post_cd_command`, the launch switches to `-e bash -ic ...`.
+
+**Single-instance caveat** — Ghostty registers `com.mitchellh.ghostty` as a D-Bus activatable service. If you run a self-built Ghostty while a distro package is also installed, D-Bus can activate the packaged binary behind your back and claim the bus name; the running self-built instance then never owns it and `present-surface` calls go to an invisible instance. Either uninstall the package, or mask its activation unit (`systemctl --user mask app-com.mitchellh.ghostty.service`) and start your build with `--gtk-single-instance=true`.
+
+### Both backends
+
+**Directory discovery** — when `~/.config/gnometerminal-tab-search/config.toml` exists, immediate child directories from the configured roots are added to the picker when they are not already open as tabs.
+
+**Multi-window support** — when more than one terminal window is open, tab names are prefixed with `[window-title]` to disambiguate.
 
 **Dedupe + precedence** — if a directory name exactly matches an open tab title, only the tab is shown. When multiple configured roots contain the same first-level basename, the earliest root in the config wins.
 
 ## Optional config
 
-If `~/.config/gnometerminal-tab-search/config.toml` is missing, the tool behaves as a tab switcher only.
-
-When the config file exists, it becomes the only source of truth for launcher roots:
+If `~/.config/gnometerminal-tab-search/config.toml` is missing, the tool behaves as a GNOME Terminal tab switcher only.
 
 ```toml
+terminal = "ghostty"                                    # optional; default "gnome-terminal"
+ghostty_command = "~/.local/ghostty-head/bin/ghostty"   # optional; default "ghostty"
+
 roots = [
   "~/pmg",
   "~/projects",
@@ -35,7 +54,9 @@ post_cd_command = "my_shell_function"
 
 Rules:
 
-- `roots` is ordered; earlier roots take precedence and later duplicate basenames are dropped.
+- `terminal` selects the backend: `gnome-terminal` (default) or `ghostty`.
+- `ghostty_command` points directory launches at a specific Ghostty binary — useful when a self-built Ghostty is not on the hotkey environment's PATH. `~` is expanded.
+- `roots` is optional; when absent it defaults to your home directory. It is ordered; earlier roots take precedence and later duplicate basenames are dropped.
 - `post_cd_command` is optional.
 - `post_cd_command` is bash-only and is executed after changing into the launched directory.
 - because the command runs through bash, shell functions loaded from `~/.bashrc` are supported.
@@ -44,12 +65,13 @@ Rules:
 
 ## Requirements
 
-- Ubuntu 24.04 or any GNOME desktop with GNOME Terminal
+- Ubuntu 24.04 or any GNOME desktop on X11, with GNOME Terminal and/or Ghostty
 - `rofi` (fuzzy picker UI)
 - `python3-gi` and `gir1.2-atspi-2.0` (AT-SPI Python bindings)
 - `xdotool` (window focus)
 - `libglib2.0-bin` (provides `gdbus`)
-- Python 3.9 or later with `gi` importable
+- Python 3.11 or later with `gi` importable (3.11+ needed for config parsing via `tomllib`)
+- For the Ghostty backend with tab switching: a Ghostty build newer than 1.3.1 (self-built from HEAD until released). Ghostty installation is not managed by `install.sh`.
 
 ## Installation
 
@@ -90,8 +112,9 @@ gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/or
 | File | Purpose |
 |---|---|
 | `tab-search` | Shell wrapper — entry point, finds a Python with `gi` available |
-| `tab-search.py` | Runtime logic — AT-SPI tab enumeration, rofi picker, tab switching, directory launching |
-| `tab_search_core.py` | Core data model and merge/launch helpers |
+| `tab-search.py` | Runtime orchestration — config load, backend selection, rofi picker |
+| `terminal_backends.py` | Backend implementations — GNOME Terminal and Ghostty (AT-SPI, D-Bus, launching) |
+| `tab_search_core.py` | Pure core — data model, config parsing, command builders, matching helpers |
 | `install.sh` | Installs apt dependencies and registers the GNOME keyboard shortcut |
 
 ## Usage without install.sh
