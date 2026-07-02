@@ -14,12 +14,14 @@ from tab_search_core import (
     ConfigError,
     LauncherConfig,
     TabEntry,
+    assign_dbus_window_paths,
     build_gnome_terminal_commands,
     build_picker_entries,
     build_terminal_launch_env,
     command_result_is_success,
     discover_first_level_directories,
     load_launcher_config,
+    parse_dbus_window_numbers,
     pick_focus_window_id,
     pick_remote_terminal_env,
 )
@@ -42,6 +44,23 @@ def find_role(node, role, depth=10):
     return None
 
 
+def get_live_dbus_window_numbers():
+    """Return live GNOME Terminal D-Bus window numbers, sorted ascending."""
+    result = subprocess.run(
+        [
+            'gdbus', 'introspect', '--session',
+            '--dest', 'org.gnome.Terminal',
+            '--object-path', '/org/gnome/Terminal/window',
+            '--xml',
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+    return parse_dbus_window_numbers(result.stdout)
+
+
 def get_tabs():
     """Return list of open GNOME Terminal tabs."""
     Atspi.init()
@@ -59,11 +78,12 @@ def get_tabs():
 
     multi_window = len(frames) > 1
     tabs = []
+    dbus_window_paths = assign_dbus_window_paths(len(frames), get_live_dbus_window_numbers())
 
     for win_idx, frame in enumerate(frames):
         win_name = frame.get_name()
         tab_list = find_role(frame, 'page tab list')
-        dbus_window = f'/org/gnome/Terminal/window/{win_idx + 1}'
+        dbus_window = dbus_window_paths[win_idx]
         for tab_idx in range(tab_list.get_child_count()):
             tab = tab_list.get_child_at_index(tab_idx)
             if tab:

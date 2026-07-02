@@ -7,12 +7,14 @@ from tab_search_core import (
     DirectoryEntry,
     LauncherConfig,
     TabEntry,
+    assign_dbus_window_paths,
     build_gnome_terminal_commands,
     build_terminal_launch_env,
     build_picker_entries,
     command_result_is_success,
     discover_first_level_directories,
     load_launcher_config,
+    parse_dbus_window_numbers,
     pick_focus_window_id,
     pick_remote_terminal_env,
 )
@@ -161,6 +163,50 @@ class LaunchHelperTests(unittest.TestCase):
         )
 
         self.assertEqual(window_id, "96469002")
+
+
+class DbusWindowMappingTests(unittest.TestCase):
+    def test_parse_dbus_window_numbers_extracts_sorted_child_node_numbers(self):
+        xml = (
+            '<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"\n'
+            '                      "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">\n'
+            "<node>\n"
+            '  <node name="3"/>\n'
+            '  <node name="2"/>\n'
+            "</node>\n"
+        )
+
+        self.assertEqual(parse_dbus_window_numbers(xml), [2, 3])
+
+    def test_parse_dbus_window_numbers_ignores_non_numeric_nodes(self):
+        xml = '<node><node name="1"/><node name="abc"/></node>'
+
+        self.assertEqual(parse_dbus_window_numbers(xml), [1])
+
+    def test_parse_dbus_window_numbers_handles_invalid_xml(self):
+        self.assertEqual(parse_dbus_window_numbers("not xml"), [])
+
+    def test_assign_dbus_window_paths_uses_live_window_numbers(self):
+        # Window 1 was closed; the two surviving windows are 2 and 3.
+        paths = assign_dbus_window_paths(2, [2, 3])
+
+        self.assertEqual(
+            paths,
+            ["/org/gnome/Terminal/window/2", "/org/gnome/Terminal/window/3"],
+        )
+
+    def test_assign_dbus_window_paths_falls_back_to_sequential_on_mismatch(self):
+        paths = assign_dbus_window_paths(2, [5])
+
+        self.assertEqual(
+            paths,
+            ["/org/gnome/Terminal/window/1", "/org/gnome/Terminal/window/2"],
+        )
+
+    def test_assign_dbus_window_paths_falls_back_when_no_numbers_available(self):
+        paths = assign_dbus_window_paths(1, [])
+
+        self.assertEqual(paths, ["/org/gnome/Terminal/window/1"])
 
 
 class ConfigTests(unittest.TestCase):

@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+TAB_SEARCH_PATH = Path(__file__).resolve().parent.parent / "tab-search.py"
+
 
 class OpenDirectoryTests(unittest.TestCase):
     def load_module(self):
@@ -17,7 +19,7 @@ class OpenDirectoryTests(unittest.TestCase):
         with patch.dict(sys.modules, {"gi": gi_module, "gi.repository": repository_module}):
             spec = importlib.util.spec_from_file_location(
                 "tab_search_runtime_module",
-                "/home/phil/projects/gnometerminal-tab-search/tab-search.py",
+                str(TAB_SEARCH_PATH),
             )
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
@@ -90,6 +92,41 @@ class OpenDirectoryTests(unittest.TestCase):
                 "cd -- /tmp/work || exit 1; my_function; exec bash -i",
             ],
         )
+
+    def test_get_live_dbus_window_numbers_introspects_terminal_window_node(self):
+        module = self.load_module()
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout='<node><node name="2"/><node name="3"/></node>',
+                stderr="",
+            )
+
+        with patch.object(module.subprocess, "run", side_effect=fake_run):
+            numbers = module.get_live_dbus_window_numbers()
+
+        self.assertEqual(numbers, [2, 3])
+        self.assertEqual(
+            calls[0],
+            [
+                "gdbus", "introspect", "--session",
+                "--dest", "org.gnome.Terminal",
+                "--object-path", "/org/gnome/Terminal/window",
+                "--xml",
+            ],
+        )
+
+    def test_get_live_dbus_window_numbers_returns_empty_on_failure(self):
+        module = self.load_module()
+
+        def fake_run(command, **kwargs):
+            return types.SimpleNamespace(returncode=1, stdout="", stderr="error")
+
+        with patch.object(module.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(module.get_live_dbus_window_numbers(), [])
 
     def test_main_skips_directory_discovery_when_config_is_missing(self):
         module = self.load_module()

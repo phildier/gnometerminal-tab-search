@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import shlex
+import xml.etree.ElementTree as ElementTree
 
 try:
     import tomllib
@@ -146,6 +147,38 @@ def build_gnome_terminal_commands(directory: Path, post_cd_command: str | None =
         ["gnome-terminal", "--tab", working_directory],
         ["gnome-terminal", working_directory],
     ]
+
+
+def parse_dbus_window_numbers(introspection_xml: str) -> list[int]:
+    """Extract live GNOME Terminal window numbers from D-Bus introspection XML."""
+    try:
+        root = ElementTree.fromstring(introspection_xml)
+    except ElementTree.ParseError:
+        return []
+
+    numbers = []
+    for child in root.findall("node"):
+        name = child.get("name", "")
+        if name.isdigit():
+            numbers.append(int(name))
+
+    return sorted(numbers)
+
+
+def assign_dbus_window_paths(frame_count: int, live_window_numbers: list[int]) -> list[str]:
+    """Map AT-SPI frame order to live D-Bus window paths.
+
+    GNOME Terminal allocates window numbers monotonically and never reuses
+    them, so after closing a window the survivors may be numbered 2, 3, ...
+    When the live window count matches the frame count, use the live numbers
+    in order; otherwise fall back to the historical sequential assumption.
+    """
+    if len(live_window_numbers) == frame_count:
+        numbers = live_window_numbers
+    else:
+        numbers = list(range(1, frame_count + 1))
+
+    return [f"/org/gnome/Terminal/window/{number}" for number in numbers]
 
 
 def pick_focus_window_id(candidates: list[tuple[str, str]]) -> str | None:
