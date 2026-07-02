@@ -1,7 +1,7 @@
 # Ghostty Backend Support — Design
 
 Date: 2026-07-02
-Status: Approved
+Status: Approved (revised: present-surface mechanism replaces grab_focus)
 
 ## Goal
 
@@ -13,10 +13,21 @@ tab switching, and directory launching.
 ## Verified facts (tested live, 2026-07-02, Ghostty 1.3.1 on Ubuntu/X11)
 
 - Ghostty runs as a single-instance GTK app on D-Bus at
-  `com.mitchellh.ghostty`, exposing `org.gtk.Actions`, but there is **no
-  tab-switch action over D-Bus**. `goto_tab` exists only as an in-app
-  keybind action. `present-surface(uint64)` exists but surface IDs are not
-  discoverable externally.
+  `com.mitchellh.ghostty`, exposing `org.gtk.Actions`. `goto_tab` exists
+  only as an in-app keybind action, but an app-level
+  `present-surface(uint64)` D-Bus action exists: it looks up a surface by
+  ID and presents it — "This may involve raising the window and switching
+  tabs" (src/Surface.zig `presentSurface`).
+- In released 1.3.1 surface IDs are not discoverable externally. On
+  upstream HEAD (verified in source, `src/Surface.zig`), every surface
+  exports `GHOSTTY_SURFACE_ID` (format `0x%016x`, u64) into its child
+  process environment, documented as being for IPC over D-Bus. This repo
+  targets a HEAD build of Ghostty.
+- AT-SPI `grab_focus()` fails with `atspi_error (1)` on every Ghostty node
+  variant (page tab, label, panels, content), even with the window
+  activated first. Ghostty/GTK4 does not service remote focus requests.
+  The AT-SPI Action interface exposes no tab actions. grab_focus is a dead
+  end; `present-surface` is the switching mechanism.
 - Ghostty tabs appear in the AT-SPI tree as `page tab` nodes (named with
   tab titles, e.g. `~/projects/foo`) under a `page tab list` inside a
   `scroll pane`. Another `page tab list` without `page tab` children also
@@ -36,10 +47,18 @@ tab switching, and directory launching.
 
 - **Backend selection:** explicit `terminal` config key only, defaulting to
   `"gnome-terminal"`. No auto-detection.
-- **Ghostty tab switching:** AT-SPI `grab_focus()` on the `page tab` node,
-  verified by a spike before implementation. Per "grab_focus or bust": if
-  the spike fails (including fallback variants), Ghostty ships
-  launcher-only with no tab rows. No keystroke injection.
+- **Ghostty tab switching:** harvest `GHOSTTY_SURFACE_ID` from
+  `/proc/<pid>/environ` of Ghostty child shells (reusing the existing
+  env-harvesting machinery built for GNOME Terminal), match the target tab
+  to a surface, then call the `present-surface` D-Bus action with the
+  surface ID. This raises the window too, so no xdotool focus dance is
+  needed for switching. Requires Ghostty built from HEAD (user runs their
+  own build); if no `GHOSTTY_SURFACE_ID` is found in any harvested
+  environment (older Ghostty), degrade gracefully to launcher-only with no
+  tab rows.
+- **Tab-to-surface matching:** match by `PWD` from the same environ read
+  where possible, falling back to title matching against AT-SPI tab names.
+  Exact strategy validated by the Task 1 spike.
 - **`roots` becomes optional:** when a config file exists without `roots`,
   default to `[~]`. When `roots` is present it must still be a non-empty
   list of existing directories. No config file at all keeps today's
@@ -61,10 +80,10 @@ Approach A — backend protocol:
 
 - `GnomeTerminalBackend` wraps the existing verified logic (AT-SPI listing,
   gdbus `active-tab` SetState, env-harvested `gnome-terminal --tab` launch).
-- `GhosttyBackend` uses AT-SPI for listing and `grab_focus()` switching,
-  `ghostty +new-window` for launching, `_NET_WM_NAME` matching for window
-  focus. Its tab entries carry a live AT-SPI node reference, so they are a
-  backend-local dataclass, not pure core data.
+- `GhosttyBackend` uses AT-SPI for tab listing, harvested
+  `GHOSTTY_SURFACE_ID` + `present-surface` D-Bus for switching, and
+  `ghostty +new-window` IPC for launching. Its tab entries carry a surface
+  ID (u64) — plain data, so they can live in the core if convenient.
 - `tab_search_core.py` stays pure and gains `build_ghostty_launch_command`
   and `pick_window_id_by_name`; the bash launch script builder is shared
   between backends.
@@ -80,6 +99,8 @@ separate script per terminal (duplicates rofi/main plumbing).
 - Ghostty launch failure: exit with stderr message; no fallback chain
   (single-instance IPC has no tab-vs-window env failure mode).
 - Broken AT-SPI: existing behavior — empty tab list.
+- Ghostty without `GHOSTTY_SURFACE_ID` support (pre-HEAD build):
+  launcher-only, no tab rows.
 
 ## Testing
 
