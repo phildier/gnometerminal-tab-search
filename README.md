@@ -26,7 +26,27 @@ The terminal backend is selected by the optional `terminal` config key (`gnome-t
 
 **Directory launch** — `ghostty +new-window --working-directory=...` (native single-instance IPC; no environment harvesting needed). With a `post_cd_command`, the launch switches to `-e bash -ic ...`.
 
-**Single-instance caveat** — Ghostty registers `com.mitchellh.ghostty` as a D-Bus activatable service. If you run a self-built Ghostty while a distro package is also installed, D-Bus can activate the packaged binary behind your back and claim the bus name; the running self-built instance then never owns it and `present-surface` calls go to an invisible instance. Either uninstall the package, or mask its activation unit (`systemctl --user mask app-com.mitchellh.ghostty.service`) and start your build with `--gtk-single-instance=true`.
+**Single-instance caveat** — Ghostty registers `com.mitchellh.ghostty` as a D-Bus activatable service backed by a systemd user unit. If you run a self-built Ghostty while a distro package is also installed, D-Bus activation can start the packaged binary behind your back and claim the bus name; the self-built instance then never owns it and `present-surface` calls go to an invisible instance. Do not mask the activation unit — GNOME Shell launches the app through D-Bus activation, and a masked unit makes launching fail silently. Instead, override the unit to point at your build:
+
+```ini
+# ~/.config/systemd/user/app-com.mitchellh.ghostty.service
+[Unit]
+Description=Ghostty (HEAD build)
+After=graphical-session.target
+After=dbus.socket
+Requires=dbus.socket
+
+[Service]
+Type=notify-reload
+ReloadSignal=SIGUSR2
+BusName=com.mitchellh.ghostty
+ExecStart=%h/.local/ghostty-head/bin/ghostty --gtk-single-instance=true
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+then `systemctl --user daemon-reload`. Pair it with a user-level desktop entry (`~/.local/share/applications/com.mitchellh.ghostty.desktop`, copied from the system one) whose `Exec`/`TryExec` point at the same binary, keeping `DBusActivatable=true`.
 
 ### Both backends
 
