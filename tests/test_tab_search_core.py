@@ -247,6 +247,62 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_launcher_config(config_path)
 
+    def test_terminal_defaults_to_gnome_terminal_when_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects"
+            root.mkdir()
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text(f'roots = ["{root}"]\n', encoding="utf-8")
+
+            config = load_launcher_config(config_path)
+
+        self.assertEqual(config.terminal, "gnome-terminal")
+
+    def test_terminal_accepts_ghostty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('terminal = "ghostty"\n', encoding="utf-8")
+
+            config = load_launcher_config(config_path)
+
+        self.assertEqual(config.terminal, "ghostty")
+
+    def test_terminal_rejects_unknown_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('terminal = "kitty"\n', encoding="utf-8")
+
+            with self.assertRaises(ConfigError) as ctx:
+                load_launcher_config(config_path)
+
+        self.assertIn("gnome-terminal", str(ctx.exception))
+        self.assertIn("ghostty", str(ctx.exception))
+
+    def test_terminal_rejects_non_string_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('terminal = 3\n', encoding="utf-8")
+
+            with self.assertRaises(ConfigError):
+                load_launcher_config(config_path)
+
+    def test_missing_roots_defaults_to_home_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('terminal = "ghostty"\n', encoding="utf-8")
+
+            config = load_launcher_config(config_path)
+
+        self.assertEqual(config.roots, [Path.home()])
+
+    def test_present_but_empty_roots_still_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('terminal = "ghostty"\nroots = []\n', encoding="utf-8")
+
+            with self.assertRaises(ConfigError):
+                load_launcher_config(config_path)
+
 
 if __name__ == "__main__":
     unittest.main()

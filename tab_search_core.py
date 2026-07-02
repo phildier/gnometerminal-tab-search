@@ -33,10 +33,14 @@ class PickerEntry:
     directory: DirectoryEntry | None = None
 
 
+SUPPORTED_TERMINALS = ("gnome-terminal", "ghostty")
+
+
 @dataclass(frozen=True)
 class LauncherConfig:
     roots: list[Path]
     post_cd_command: str | None = None
+    terminal: str = "gnome-terminal"
 
 
 class ConfigError(ValueError):
@@ -73,21 +77,30 @@ def load_launcher_config(config_path: Path) -> LauncherConfig | None:
         raise ConfigError(f"Invalid config TOML: {exc}") from exc
 
     roots_value = data.get("roots")
-    if not isinstance(roots_value, list) or not roots_value or not all(isinstance(item, str) for item in roots_value):
-        raise ConfigError("Config 'roots' must be a non-empty list of directory strings.")
+    if roots_value is None:
+        roots = [Path.home()]
+    else:
+        if not isinstance(roots_value, list) or not roots_value or not all(isinstance(item, str) for item in roots_value):
+            raise ConfigError("Config 'roots' must be a non-empty list of directory strings.")
 
-    roots = []
-    for root_value in roots_value:
-        root_path = Path(root_value).expanduser()
-        if not root_path.is_dir():
-            raise ConfigError(f"Configured root is not a directory: {root_value}")
-        roots.append(root_path)
+        roots = []
+        for root_value in roots_value:
+            root_path = Path(root_value).expanduser()
+            if not root_path.is_dir():
+                raise ConfigError(f"Configured root is not a directory: {root_value}")
+            roots.append(root_path)
 
     post_cd_command = data.get("post_cd_command")
     if post_cd_command is not None and not isinstance(post_cd_command, str):
         raise ConfigError("Config 'post_cd_command' must be a string.")
 
-    return LauncherConfig(roots=roots, post_cd_command=post_cd_command)
+    terminal = data.get("terminal", "gnome-terminal")
+    if terminal not in SUPPORTED_TERMINALS:
+        raise ConfigError(
+            f"Config 'terminal' must be one of: {', '.join(SUPPORTED_TERMINALS)}."
+        )
+
+    return LauncherConfig(roots=roots, post_cd_command=post_cd_command, terminal=terminal)
 
 
 def build_picker_entries(tabs: list[TabEntry], directories: list[DirectoryEntry]) -> list[PickerEntry]:
