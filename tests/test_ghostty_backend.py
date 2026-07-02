@@ -149,5 +149,37 @@ class GhosttyGetTabsTests(unittest.TestCase):
         self.assertEqual(tabs, [])
 
 
+class GhosttySwitchTabTests(unittest.TestCase):
+    def test_switch_tab_activates_present_surface_with_uint64_id(self):
+        backends = load_backends()
+        backend = backends.GhosttyBackend()
+        tab = backends.GhosttyTabEntry(
+            display_name="~/projects/alpha",
+            raw_name="~/projects/alpha",
+            surface_id=0x75BD149C639F7650,
+        )
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            backend.switch_tab(tab)
+
+        self.assertEqual(
+            calls[0],
+            [
+                "gdbus", "call", "--session",
+                "--dest", "com.mitchellh.ghostty",
+                "--object-path", "/com/mitchellh/ghostty",
+                "--method", "org.gtk.Actions.Activate",
+                "present-surface",
+                f"[<uint64 {0x75BD149C639F7650}>]",
+                "{}",
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

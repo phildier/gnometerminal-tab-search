@@ -215,6 +215,17 @@ class GhosttyBackend:
 
         return tabs
 
+    def switch_tab(self, tab):
+        subprocess.run([
+            'gdbus', 'call', '--session',
+            '--dest', 'com.mitchellh.ghostty',
+            '--object-path', '/com/mitchellh/ghostty',
+            '--method', 'org.gtk.Actions.Activate',
+            'present-surface',
+            f'[<uint64 {tab.surface_id}>]',
+            '{}',
+        ], capture_output=True)
+
     def _find_ghostty_app(self):
         Atspi.init()
         desktop = Atspi.get_desktop(0)
