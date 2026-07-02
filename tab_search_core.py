@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import json
 import shlex
 import xml.etree.ElementTree as ElementTree
 
@@ -189,6 +190,29 @@ def build_ghostty_launch_command(
         return [ghostty_command, "+new-window", "-e", "bash", "-ic", script]
 
     return [ghostty_command, "+new-window", f"--working-directory={directory}"]
+
+
+def build_ghostty_new_tab_arguments(
+    directory: Path,
+    post_cd_command: str | None = None,
+) -> list[str]:
+    """Build the CLI-style argument strings for the new-tab-command D-Bus action."""
+    if post_cd_command:
+        script = build_cd_script(directory, post_cd_command)
+        return ["-e", "bash", "-ic", script]
+
+    return [f"--working-directory={directory}"]
+
+
+def format_gvariant_string_array_parameter(arguments: list[str]) -> str:
+    """Format a list of strings as a gdbus text-format `av` parameter.
+
+    Produces `[<["a", "b"]>]`: an array holding one variant that wraps an
+    array of strings, matching what org.gtk.Actions.Activate expects for
+    Ghostty's *-command actions.
+    """
+    quoted = ", ".join(json.dumps(argument) for argument in arguments)
+    return f"[<[{quoted}]>]"
 
 
 @dataclass(frozen=True)

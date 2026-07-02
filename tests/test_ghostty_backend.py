@@ -181,46 +181,106 @@ class GhosttySwitchTabTests(unittest.TestCase):
         )
 
 
+NEW_TAB_GDBUS_PREFIX = [
+    "gdbus", "call", "--session",
+    "--dest", "com.mitchellh.ghostty",
+    "--object-path", "/com/mitchellh/ghostty",
+    "--method", "org.gtk.Actions.Activate",
+    "new-tab-command",
+]
+
+
 class GhosttyOpenDirectoryTests(unittest.TestCase):
-    def test_open_directory_uses_new_window_ipc(self):
+    def test_open_directory_prefers_new_tab_dbus_action(self):
         backends = load_backends()
         backend = backends.GhosttyBackend()
         calls = []
 
         def fake_run(command, **kwargs):
             calls.append(command)
+            if command[:2] == ["gdbus", "call"] and "org.gtk.Actions.List" in command:
+                return types.SimpleNamespace(
+                    returncode=0,
+                    stdout="(['new-tab-command', 'new-window'],)",
+                    stderr="",
+                )
+            return types.SimpleNamespace(returncode=0, stdout="()", stderr="")
+
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            backend.open_directory(Path("/tmp/work"))
+
+        self.assertEqual(
+            calls[-1],
+            NEW_TAB_GDBUS_PREFIX + ["[<[\"--working-directory=/tmp/work\"]>]", "{}"],
+        )
+
+    def test_open_directory_new_tab_with_post_command_uses_bash(self):
+        backends = load_backends()
+        backend = backends.GhosttyBackend()
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            if command[:2] == ["gdbus", "call"] and "org.gtk.Actions.List" in command:
+                return types.SimpleNamespace(
+                    returncode=0,
+                    stdout="(['new-tab-command'],)",
+                    stderr="",
+                )
+            return types.SimpleNamespace(returncode=0, stdout="()", stderr="")
+
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            backend.open_directory(Path("/tmp/work"), "my_function")
+
+        self.assertEqual(
+            calls[-1],
+            NEW_TAB_GDBUS_PREFIX
+            + [
+                '[<["-e", "bash", "-ic", "cd -- /tmp/work || exit 1; my_function; exec bash -i"]>]',
+                "{}",
+            ],
+        )
+
+    def test_open_directory_falls_back_to_new_window_without_patched_action(self):
+        backends = load_backends()
+        backend = backends.GhosttyBackend()
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            if command[:2] == ["gdbus", "call"] and "org.gtk.Actions.List" in command:
+                return types.SimpleNamespace(
+                    returncode=0,
+                    stdout="(['new-window', 'new-window-command'],)",
+                    stderr="",
+                )
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
         with patch.object(backends.subprocess, "run", side_effect=fake_run):
             backend.open_directory(Path("/tmp/work"))
 
         self.assertEqual(
-            calls[0],
+            calls[-1],
             ["ghostty", "+new-window", "--working-directory=/tmp/work"],
         )
 
-    def test_open_directory_with_post_command_uses_bash(self):
+    def test_open_directory_falls_back_when_action_list_fails(self):
         backends = load_backends()
         backend = backends.GhosttyBackend()
         calls = []
 
         def fake_run(command, **kwargs):
             calls.append(command)
+            if command[:2] == ["gdbus", "call"] and "org.gtk.Actions.List" in command:
+                return types.SimpleNamespace(returncode=1, stdout="", stderr="no name")
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
         with patch.object(backends.subprocess, "run", side_effect=fake_run):
-            backend.open_directory(Path("/tmp/work"), "my_function")
+            backend.open_directory(Path("/tmp/work"))
 
         self.assertEqual(
-            calls[0],
-            [
-                "ghostty",
-                "+new-window",
-                "-e",
-                "bash",
-                "-ic",
-                "cd -- /tmp/work || exit 1; my_function; exec bash -i",
-            ],
+            calls[-1],
+            ["ghostty", "+new-window", "--working-directory=/tmp/work"],
         )
 
     def test_open_directory_exits_with_stderr_on_failure(self):

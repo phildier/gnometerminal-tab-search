@@ -1,0 +1,96 @@
+diff --git a/src/apprt/gtk/class/application.zig b/src/apprt/gtk/class/application.zig
+index a627086..b6433d4 100644
+--- a/src/apprt/gtk/class/application.zig
++++ b/src/apprt/gtk/class/application.zig
+@@ -1416,6 +1416,8 @@ pub const Application = extern struct {
+         defer as_variant_type.free();
+ 
+         const actions = [_]ext.actions.Action(Self){
++            .init("new-tab", actionNewTab, null),
++            .init("new-tab-command", actionNewTab, as_variant_type),
+             .init("new-window", actionNewWindow, null),
+             .init("new-window-command", actionNewWindow, as_variant_type),
+             .init("open-config", actionOpenConfig, null),
+@@ -1695,14 +1697,36 @@ pub const Application = extern struct {
+         };
+     }
+ 
++    /// Handle `app.new-tab` and `app.new-tab-command` GTK actions.
++    ///
++    /// Mirrors `actionNewWindow`, but opens the surface as a tab in the
++    /// most recently focused Ghostty window. Falls back to a new window
++    /// when no window exists.
++    pub fn actionNewTab(
++        action: *gio.SimpleAction,
++        parameter_: ?*glib.Variant,
++        self: *Self,
++    ) callconv(.c) void {
++        log.debug("received new tab action", .{});
++        actionNewSurface(action, parameter_, self, .tab);
++    }
++
+     /// Handle `app.new-window` and `app.new-window-command` GTK actions
+     pub fn actionNewWindow(
+-        _: *gio.SimpleAction,
++        action: *gio.SimpleAction,
+         parameter_: ?*glib.Variant,
+         self: *Self,
+     ) callconv(.c) void {
+         log.debug("received new window action", .{});
++        actionNewSurface(action, parameter_, self, .window);
++    }
+ 
++    fn actionNewSurface(
++        _: *gio.SimpleAction,
++        parameter_: ?*glib.Variant,
++        self: *Self,
++        placement: enum { window, tab },
++    ) void {
+         var arena: std.heap.ArenaAllocator = .init(Application.default().allocator());
+         defer arena.deinit();
+ 
+@@ -1799,6 +1823,24 @@ pub const Application = extern struct {
+             };
+         }
+ 
++        // For tab placement, find the most recently focused Ghostty window
++        // and open the surface as a tab there. GTK keeps the window list in
++        // most-recently-focused order. Fall back to a new window when no
++        // suitable window exists.
++        if (placement == .tab) {
++            if (self.lastFocusedWindow()) |win| {
++                win.newTabForWindow(null, .{
++                    .command = command,
++                    .working_directory = working_directory,
++                    .title = title,
++                });
++                gtk.Window.present(win.as(gtk.Window));
++                return;
++            }
++
++            log.debug("new-tab requested with no existing window, opening window", .{});
++        }
++
+         Action.newWindow(self, null, .{
+             .command = command,
+             .working_directory = working_directory,
+@@ -1808,6 +1850,19 @@ pub const Application = extern struct {
+         };
+     }
+ 
++    /// Return the most recently focused regular Ghostty window, if any.
++    fn lastFocusedWindow(self: *Self) ?*Window {
++        var node_: ?*glib.List = self.as(gtk.Application).getWindows();
++        while (node_) |node| : (node_ = node.f_next) {
++            const data = node.f_data orelse continue;
++            const gtk_window: *gtk.Window = @ptrCast(@alignCast(data));
++            const window = gobject.ext.cast(Window, gtk_window) orelse continue;
++            if (window.isQuickTerminal()) continue;
++            return window;
++        }
++        return null;
++    }
++
+     pub fn actionOpenConfig(
+         _: *gio.SimpleAction,
+         _: ?*glib.Variant,

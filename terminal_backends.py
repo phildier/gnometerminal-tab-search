@@ -22,7 +22,9 @@ from tab_search_core import (
     TabEntry,
     assign_dbus_window_paths,
     build_ghostty_launch_command,
+    build_ghostty_new_tab_arguments,
     build_gnome_terminal_commands,
+    format_gvariant_string_array_parameter,
     build_terminal_launch_env,
     collect_ghostty_surfaces,
     command_result_is_success,
@@ -231,11 +233,36 @@ class GhosttyBackend:
         ], capture_output=True)
 
     def open_directory(self, directory, post_cd_command=None):
+        if self._supports_new_tab_action():
+            arguments = build_ghostty_new_tab_arguments(directory, post_cd_command)
+            result = subprocess.run([
+                'gdbus', 'call', '--session',
+                '--dest', 'com.mitchellh.ghostty',
+                '--object-path', '/com/mitchellh/ghostty',
+                '--method', 'org.gtk.Actions.Activate',
+                'new-tab-command',
+                format_gvariant_string_array_parameter(arguments),
+                '{}',
+            ], capture_output=True, text=True)
+            if result.returncode == 0:
+                return
+            # Fall through to the new-window launch on failure.
+
         command = build_ghostty_launch_command(directory, post_cd_command, self.ghostty_command)
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
             error = result.stderr.strip() or f"command failed: {' '.join(command)}"
             sys.exit(f"Could not open directory '{directory}': {error}")
+
+    def _supports_new_tab_action(self):
+        """True when the running Ghostty exposes the patched new-tab-command action."""
+        result = subprocess.run([
+            'gdbus', 'call', '--session',
+            '--dest', 'com.mitchellh.ghostty',
+            '--object-path', '/com/mitchellh/ghostty',
+            '--method', 'org.gtk.Actions.List',
+        ], capture_output=True, text=True)
+        return result.returncode == 0 and "'new-tab-command'" in result.stdout
 
     def _find_ghostty_app(self):
         Atspi.init()

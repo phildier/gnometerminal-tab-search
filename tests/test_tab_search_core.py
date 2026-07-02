@@ -10,7 +10,9 @@ from tab_search_core import (
     TabEntry,
     assign_dbus_window_paths,
     build_ghostty_launch_command,
+    build_ghostty_new_tab_arguments,
     build_gnome_terminal_commands,
+    format_gvariant_string_array_parameter,
     build_terminal_launch_env,
     build_picker_entries,
     collect_ghostty_surfaces,
@@ -192,6 +194,26 @@ class GhosttyHelperTests(unittest.TestCase):
                 "cd -- /tmp/work || exit 1; my_function; exec bash -i",
             ],
         )
+
+    def test_build_ghostty_new_tab_arguments_uses_working_directory(self):
+        arguments = build_ghostty_new_tab_arguments(Path("/tmp/work"))
+
+        self.assertEqual(arguments, ["--working-directory=/tmp/work"])
+
+    def test_build_ghostty_new_tab_arguments_with_post_command_uses_bash(self):
+        arguments = build_ghostty_new_tab_arguments(Path("/tmp/work"), "my_function")
+
+        self.assertEqual(
+            arguments,
+            ["-e", "bash", "-ic", "cd -- /tmp/work || exit 1; my_function; exec bash -i"],
+        )
+
+    def test_format_gvariant_string_array_parameter_quotes_and_wraps(self):
+        parameter = format_gvariant_string_array_parameter(
+            ["-e", "bash", "-ic", 'say "hi"']
+        )
+
+        self.assertEqual(parameter, '[<["-e", "bash", "-ic", "say \\"hi\\""]>]')
 
     def test_build_ghostty_launch_command_uses_custom_binary(self):
         command = build_ghostty_launch_command(

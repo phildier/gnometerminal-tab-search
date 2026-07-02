@@ -24,7 +24,14 @@ The terminal backend is selected by the optional `terminal` config key (`gnome-t
 
 **Tab switching** — Ghostty exposes no tab-switch action over D-Bus, but it has an app-level `present-surface(uint64)` action that raises the window and focuses the surface's tab. Surface IDs are harvested from `GHOSTTY_SURFACE_ID` in `/proc/<pid>/environ` of Ghostty's child shells, and each tab title is matched to a surface by the shell's live working directory (`/proc/<pid>/cwd`).
 
-**Directory launch** — `ghostty +new-window --working-directory=...` (native single-instance IPC; no environment harvesting needed). With a `post_cd_command`, the launch switches to `-e bash -ic ...`.
+**Directory launch** — stock Ghostty only exposes `new-window` over IPC; it has no way to remotely open a *tab* with a chosen working directory (the window-level `new-tab` D-Bus action takes no parameters). This repo ships a small Ghostty patch (`docs/ghostty-new-tab-dbus-action.patch`, ~55 lines) adding app-level `new-tab`/`new-tab-command` D-Bus actions that mirror `new-window-command` but open the surface as a tab in the most recently focused window. When the running Ghostty exposes `new-tab-command`, directory launches open as tabs (GNOME Terminal parity); otherwise the tool falls back to `ghostty +new-window`. With a `post_cd_command`, either path launches through `-e bash -ic ...`.
+
+To apply the patch when building Ghostty from source:
+
+```bash
+git -C ghostty apply /path/to/gnometerminal-tab-search/docs/ghostty-new-tab-dbus-action.patch
+zig build -Doptimize=ReleaseFast -fno-sys=gtk4-layer-shell --prefix ~/.local/ghostty-head
+```
 
 **Single-instance caveat** — Ghostty registers `com.mitchellh.ghostty` as a D-Bus activatable service backed by a systemd user unit. If you run a self-built Ghostty while a distro package is also installed, D-Bus activation can start the packaged binary behind your back and claim the bus name; the self-built instance then never owns it and `present-surface` calls go to an invisible instance. Do not mask the activation unit — GNOME Shell launches the app through D-Bus activation, and a masked unit makes launching fail silently. Instead, override the unit to point at your build:
 
