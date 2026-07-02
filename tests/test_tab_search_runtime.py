@@ -1,3 +1,4 @@
+import importlib
 import importlib.util
 import sys
 import types
@@ -8,25 +9,31 @@ from unittest.mock import Mock, patch
 TAB_SEARCH_PATH = Path(__file__).resolve().parent.parent / "tab-search.py"
 
 
+def load_modules():
+    """Load terminal_backends and tab-search with a faked gi package."""
+    gi_module = types.ModuleType("gi")
+    gi_module.require_version = lambda *args, **kwargs: None
+
+    repository_module = types.ModuleType("gi.repository")
+    repository_module.Atspi = object()
+
+    with patch.dict(sys.modules, {"gi": gi_module, "gi.repository": repository_module}):
+        sys.modules.pop("terminal_backends", None)
+        backends = importlib.import_module("terminal_backends")
+
+        spec = importlib.util.spec_from_file_location(
+            "tab_search_runtime_module",
+            str(TAB_SEARCH_PATH),
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return backends, module
+
+
 class OpenDirectoryTests(unittest.TestCase):
-    def load_module(self):
-        gi_module = types.ModuleType("gi")
-        gi_module.require_version = lambda *args, **kwargs: None
-
-        repository_module = types.ModuleType("gi.repository")
-        repository_module.Atspi = object()
-
-        with patch.dict(sys.modules, {"gi": gi_module, "gi.repository": repository_module}):
-            spec = importlib.util.spec_from_file_location(
-                "tab_search_runtime_module",
-                str(TAB_SEARCH_PATH),
-            )
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return module
-
     def test_open_directory_focuses_terminal_after_successful_tab_launch(self):
-        module = self.load_module()
+        backends, _ = load_modules()
+        backend = backends.GnomeTerminalBackend()
         calls = []
 
         def fake_run(command, **kwargs):
@@ -47,14 +54,14 @@ class OpenDirectoryTests(unittest.TestCase):
                 )
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        with patch.object(module, "get_terminal_child_environments", return_value=[
+        with patch.object(backends, "get_child_environments", return_value=[
             {
                 "GNOME_TERMINAL_SERVICE": ":1.100",
                 "GNOME_TERMINAL_SCREEN": "/org/gnome/Terminal/screen/abc",
             }
         ]):
-            with patch.object(module.subprocess, "run", side_effect=fake_run):
-                module.open_directory_in_terminal(Path("/tmp/work"))
+            with patch.object(backends.subprocess, "run", side_effect=fake_run):
+                backend.open_directory(Path("/tmp/work"))
 
         self.assertEqual(calls[0], ["gnome-terminal", "--tab", "--working-directory=/tmp/work"])
         self.assertEqual(
@@ -63,7 +70,8 @@ class OpenDirectoryTests(unittest.TestCase):
         )
 
     def test_open_directory_uses_bash_launch_when_post_command_is_configured(self):
-        module = self.load_module()
+        backends, _ = load_modules()
+        backend = backends.GnomeTerminalBackend()
         calls = []
 
         def fake_run(command, **kwargs):
@@ -78,9 +86,9 @@ class OpenDirectoryTests(unittest.TestCase):
                 )
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        with patch.object(module, "get_terminal_child_environments", return_value=[]):
-            with patch.object(module.subprocess, "run", side_effect=fake_run):
-                module.open_directory_in_terminal(Path("/tmp/work"), "my_function")
+        with patch.object(backends, "get_child_environments", return_value=[]):
+            with patch.object(backends.subprocess, "run", side_effect=fake_run):
+                backend.open_directory(Path("/tmp/work"), "my_function")
 
         self.assertEqual(
             calls[0],
@@ -93,8 +101,11 @@ class OpenDirectoryTests(unittest.TestCase):
             ],
         )
 
+
+class LiveWindowNumberTests(unittest.TestCase):
     def test_get_live_dbus_window_numbers_introspects_terminal_window_node(self):
-        module = self.load_module()
+        backends, _ = load_modules()
+        backend = backends.GnomeTerminalBackend()
         calls = []
 
         def fake_run(command, **kwargs):
@@ -105,8 +116,8 @@ class OpenDirectoryTests(unittest.TestCase):
                 stderr="",
             )
 
-        with patch.object(module.subprocess, "run", side_effect=fake_run):
-            numbers = module.get_live_dbus_window_numbers()
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            numbers = backend._get_live_dbus_window_numbers()
 
         self.assertEqual(numbers, [2, 3])
         self.assertEqual(
@@ -120,18 +131,29 @@ class OpenDirectoryTests(unittest.TestCase):
         )
 
     def test_get_live_dbus_window_numbers_returns_empty_on_failure(self):
-        module = self.load_module()
+        backends, _ = load_modules()
+        backend = backends.GnomeTerminalBackend()
 
         def fake_run(command, **kwargs):
             return types.SimpleNamespace(returncode=1, stdout="", stderr="error")
 
-        with patch.object(module.subprocess, "run", side_effect=fake_run):
-            self.assertEqual(module.get_live_dbus_window_numbers(), [])
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(backend._get_live_dbus_window_numbers(), [])
+
+
+class MainFlowTests(unittest.TestCase):
+    def make_backend(self, tabs):
+        backend = Mock()
+        backend.get_tabs.return_value = tabs
+        return backend
 
     def test_main_skips_directory_discovery_when_config_is_missing(self):
-        module = self.load_module()
+        _, module = load_modules()
+        backend = self.make_backend(
+            [module_tab_entry(module, "alpha")]
+        )
 
-        with patch.object(module, "get_tabs", return_value=[module.TabEntry("alpha", "alpha", 0, "/w/1")]):
+        with patch.object(module, "create_backend", return_value=backend):
             with patch.object(module, "load_launcher_config", return_value=None):
                 with patch.object(module, "discover_first_level_directories") as discover_directories:
                     with patch.object(
@@ -145,10 +167,13 @@ class OpenDirectoryTests(unittest.TestCase):
         discover_directories.assert_not_called()
 
     def test_main_uses_configured_roots_for_directory_discovery(self):
-        module = self.load_module()
-        config = module.LauncherConfig(roots=[Path("/tmp/one"), Path("/tmp/two")], post_cd_command=None)
+        _, module = load_modules()
+        from tab_search_core import LauncherConfig
 
-        with patch.object(module, "get_tabs", return_value=[]):
+        config = LauncherConfig(roots=[Path("/tmp/one"), Path("/tmp/two")], post_cd_command=None)
+        backend = self.make_backend([])
+
+        with patch.object(module, "create_backend", return_value=backend):
             with patch.object(module, "load_launcher_config", return_value=config):
                 discover_directories = Mock(return_value=[])
                 with patch.object(module, "discover_first_level_directories", discover_directories):
@@ -161,6 +186,12 @@ class OpenDirectoryTests(unittest.TestCase):
                             module.main()
 
         discover_directories.assert_called_once_with(config.roots)
+
+
+def module_tab_entry(module, name):
+    from tab_search_core import TabEntry
+
+    return TabEntry(display_name=name, raw_name=name, tab_index=0, dbus_window="/w/1")
 
 
 if __name__ == "__main__":
