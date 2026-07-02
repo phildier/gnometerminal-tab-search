@@ -216,6 +216,20 @@ class CreateBackendTests(unittest.TestCase):
 
         self.assertIsInstance(backend, backends.GhosttyBackend)
 
+    def test_ghostty_backend_receives_configured_command(self):
+        from tab_search_core import LauncherConfig
+
+        backends, module = load_modules()
+        config = LauncherConfig(
+            roots=[Path("/tmp")],
+            terminal="ghostty",
+            ghostty_command="/opt/ghostty/bin/ghostty",
+        )
+
+        backend = module.create_backend(config)
+
+        self.assertEqual(backend.ghostty_command, "/opt/ghostty/bin/ghostty")
+
 
 def module_tab_entry(module, name):
     from tab_search_core import TabEntry

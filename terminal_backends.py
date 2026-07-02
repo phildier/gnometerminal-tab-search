@@ -177,6 +177,9 @@ class GhosttyBackend:
     Without it, get_tabs() returns [] and the picker is launcher-only.
     """
 
+    def __init__(self, ghostty_command='ghostty'):
+        self.ghostty_command = ghostty_command
+
     def get_tabs(self):
         app = self._find_ghostty_app()
         if app is None:
@@ -228,7 +231,7 @@ class GhosttyBackend:
         ], capture_output=True)
 
     def open_directory(self, directory, post_cd_command=None):
-        command = build_ghostty_launch_command(directory, post_cd_command)
+        command = build_ghostty_launch_command(directory, post_cd_command, self.ghostty_command)
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
             error = result.stderr.strip() or f"command failed: {' '.join(command)}"

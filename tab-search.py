@@ -16,7 +16,7 @@ from terminal_backends import GhosttyBackend, GnomeTerminalBackend
 
 def create_backend(launcher_config):
     if launcher_config is not None and launcher_config.terminal == 'ghostty':
-        return GhosttyBackend()
+        return GhosttyBackend(ghostty_command=launcher_config.ghostty_command)
     return GnomeTerminalBackend()
 
 

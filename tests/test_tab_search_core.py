@@ -193,6 +193,16 @@ class GhosttyHelperTests(unittest.TestCase):
             ],
         )
 
+    def test_build_ghostty_launch_command_uses_custom_binary(self):
+        command = build_ghostty_launch_command(
+            Path("/tmp/work"), ghostty_command="/opt/ghostty/bin/ghostty"
+        )
+
+        self.assertEqual(
+            command,
+            ["/opt/ghostty/bin/ghostty", "+new-window", "--working-directory=/tmp/work"],
+        )
+
     def test_collect_ghostty_surfaces_parses_hex_ids_with_live_cwd(self):
         # cwd is the *live* working directory (/proc/<pid>/cwd), not environ
         # PWD, which is a stale snapshot from shell startup and diverges as
@@ -381,6 +391,38 @@ class ConfigTests(unittest.TestCase):
             config = load_launcher_config(config_path)
 
         self.assertEqual(config.roots, [Path.home()])
+
+    def test_ghostty_command_defaults_to_ghostty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('terminal = "ghostty"\n', encoding="utf-8")
+
+            config = load_launcher_config(config_path)
+
+        self.assertEqual(config.ghostty_command, "ghostty")
+
+    def test_ghostty_command_reads_and_expands_user_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text(
+                'terminal = "ghostty"\nghostty_command = "~/.local/ghostty-head/bin/ghostty"\n',
+                encoding="utf-8",
+            )
+
+            config = load_launcher_config(config_path)
+
+        self.assertEqual(
+            config.ghostty_command,
+            str(Path.home() / ".local" / "ghostty-head" / "bin" / "ghostty"),
+        )
+
+    def test_ghostty_command_rejects_non_string(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('ghostty_command = 5\n', encoding="utf-8")
+
+            with self.assertRaises(ConfigError):
+                load_launcher_config(config_path)
 
     def test_present_but_empty_roots_still_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -41,6 +41,7 @@ class LauncherConfig:
     roots: list[Path]
     post_cd_command: str | None = None
     terminal: str = "gnome-terminal"
+    ghostty_command: str = "ghostty"
 
 
 class ConfigError(ValueError):
@@ -100,7 +101,17 @@ def load_launcher_config(config_path: Path) -> LauncherConfig | None:
             f"Config 'terminal' must be one of: {', '.join(SUPPORTED_TERMINALS)}."
         )
 
-    return LauncherConfig(roots=roots, post_cd_command=post_cd_command, terminal=terminal)
+    ghostty_command = data.get("ghostty_command", "ghostty")
+    if not isinstance(ghostty_command, str):
+        raise ConfigError("Config 'ghostty_command' must be a string.")
+    ghostty_command = str(Path(ghostty_command).expanduser())
+
+    return LauncherConfig(
+        roots=roots,
+        post_cd_command=post_cd_command,
+        terminal=terminal,
+        ghostty_command=ghostty_command,
+    )
 
 
 def build_picker_entries(tabs: list[TabEntry], directories: list[DirectoryEntry]) -> list[PickerEntry]:
@@ -167,13 +178,17 @@ def build_gnome_terminal_commands(directory: Path, post_cd_command: str | None =
     ]
 
 
-def build_ghostty_launch_command(directory: Path, post_cd_command: str | None = None) -> list[str]:
+def build_ghostty_launch_command(
+    directory: Path,
+    post_cd_command: str | None = None,
+    ghostty_command: str = "ghostty",
+) -> list[str]:
     """Build the Ghostty new-window IPC launch command."""
     if post_cd_command:
         script = build_cd_script(directory, post_cd_command)
-        return ["ghostty", "+new-window", "-e", "bash", "-ic", script]
+        return [ghostty_command, "+new-window", "-e", "bash", "-ic", script]
 
-    return ["ghostty", "+new-window", f"--working-directory={directory}"]
+    return [ghostty_command, "+new-window", f"--working-directory={directory}"]
 
 
 @dataclass(frozen=True)
