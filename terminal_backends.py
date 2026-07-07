@@ -28,7 +28,7 @@ from tab_search_core import (
     build_terminal_launch_env,
     collect_ghostty_surfaces,
     command_result_is_success,
-    match_tab_to_surface,
+    pair_tabs_with_surfaces,
     parse_dbus_window_numbers,
     pick_focus_window_id,
     pick_remote_terminal_env,
@@ -194,7 +194,9 @@ class GhosttyBackend:
         frames = find_all_roles(app, 'frame')
         multi_window = len(frames) > 1
 
-        tabs = []
+        # Collect every tab title (with its window) first, then pair titles
+        # to surfaces globally so each surface is used at most once.
+        collected = []
         for frame in frames:
             frame_name = frame.get_name()
             tab_names = []
@@ -205,19 +207,25 @@ class GhosttyBackend:
                     break
             if not tab_names:
                 tab_names = [frame_name]
-
             for name in tab_names:
-                surface_id = match_tab_to_surface(name, surfaces)
-                if surface_id is None:
-                    continue
-                display = f'[{frame_name}] {name}' if multi_window else name
-                tabs.append(
-                    GhosttyTabEntry(
-                        display_name=display,
-                        raw_name=name,
-                        surface_id=surface_id,
-                    )
+                collected.append((frame_name, name))
+
+        surface_ids = pair_tabs_with_surfaces(
+            [name for _, name in collected], surfaces
+        )
+
+        tabs = []
+        for (frame_name, name), surface_id in zip(collected, surface_ids):
+            if surface_id is None:
+                continue
+            display = f'[{frame_name}] {name}' if multi_window else name
+            tabs.append(
+                GhosttyTabEntry(
+                    display_name=display,
+                    raw_name=name,
+                    surface_id=surface_id,
                 )
+            )
 
         return tabs
 

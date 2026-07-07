@@ -247,13 +247,40 @@ def collect_ghostty_surfaces(
     return list(surfaces.values())
 
 
-def match_tab_to_surface(tab_name: str, surfaces: list[GhosttySurface]) -> int | None:
-    """Match an AT-SPI tab title (may abbreviate home as ~) to a surface ID."""
-    tab_path = str(Path(tab_name).expanduser())
-    for surface in surfaces:
-        if surface.cwd == tab_path:
-            return surface.surface_id
-    return None
+def pair_tabs_with_surfaces(
+    tab_names: list[str],
+    surfaces: list[GhosttySurface],
+) -> list[int | None]:
+    """Match AT-SPI tab titles to surface IDs, one surface per tab.
+
+    Titles may be full paths (with ~ abbreviating home) or, with shell
+    integration title customization, just the directory basename. Exact
+    path matches are resolved first so a basename-style title can never
+    steal a surface from a full-path title. Each surface is consumed at
+    most once so duplicate titles map to distinct surfaces.
+    """
+    matched: list[int | None] = [None] * len(tab_names)
+    available = list(surfaces)
+
+    def take(index: int, predicate) -> None:
+        if matched[index] is not None:
+            return
+        for surface in available:
+            if predicate(surface):
+                matched[index] = surface.surface_id
+                available.remove(surface)
+                return
+
+    # Pass 1: exact path matches (title is the cwd, ~ expanded).
+    for i, name in enumerate(tab_names):
+        expanded = str(Path(name).expanduser())
+        take(i, lambda s, expanded=expanded: s.cwd == expanded)
+
+    # Pass 2: basename matches (custom titles showing only the directory name).
+    for i, name in enumerate(tab_names):
+        take(i, lambda s, name=name: Path(s.cwd).name == name)
+
+    return matched
 
 
 def parse_dbus_window_numbers(introspection_xml: str) -> list[int]:

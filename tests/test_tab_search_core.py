@@ -19,7 +19,7 @@ from tab_search_core import (
     command_result_is_success,
     discover_first_level_directories,
     load_launcher_config,
-    match_tab_to_surface,
+    pair_tabs_with_surfaces,
     parse_dbus_window_numbers,
     pick_focus_window_id,
     pick_remote_terminal_env,
@@ -269,19 +269,62 @@ class GhosttyHelperTests(unittest.TestCase):
         self.assertEqual(len(surfaces), 1)
         self.assertEqual(surfaces[0].cwd, "/live/dir")
 
-    def test_match_tab_to_surface_expands_tilde_in_tab_title(self):
+    def test_pair_tabs_expands_tilde_in_path_style_titles(self):
         surfaces = [
             GhosttySurface(surface_id=0x1, cwd=str(Path.home() / "projects" / "alpha")),
             GhosttySurface(surface_id=0x2, cwd="/srv/data"),
         ]
 
-        self.assertEqual(match_tab_to_surface("~/projects/alpha", surfaces), 0x1)
-        self.assertEqual(match_tab_to_surface("/srv/data", surfaces), 0x2)
+        self.assertEqual(
+            pair_tabs_with_surfaces(["~/projects/alpha", "/srv/data"], surfaces),
+            [0x1, 0x2],
+        )
 
-    def test_match_tab_to_surface_returns_none_when_no_match(self):
+    def test_pair_tabs_matches_custom_basename_titles(self):
+        # Shell integration / user config can set tab titles to the directory
+        # basename instead of the full path.
+        surfaces = [
+            GhosttySurface(surface_id=0x1, cwd="/home/phil/knowledgebase"),
+            GhosttySurface(surface_id=0x2, cwd="/home/phil/pmg/alli-infrastructure-unified"),
+        ]
+
+        self.assertEqual(
+            pair_tabs_with_surfaces(
+                ["knowledgebase", "alli-infrastructure-unified"], surfaces
+            ),
+            [0x1, 0x2],
+        )
+
+    def test_pair_tabs_assigns_duplicate_titles_to_distinct_surfaces(self):
+        surfaces = [
+            GhosttySurface(surface_id=0x1, cwd="/home/phil/projects/alpha"),
+            GhosttySurface(surface_id=0x2, cwd="/home/phil/projects/alpha"),
+        ]
+
+        paired = pair_tabs_with_surfaces(["alpha", "alpha"], surfaces)
+
+        self.assertEqual(sorted(paired), [0x1, 0x2])
+
+    def test_pair_tabs_returns_none_for_unmatched_titles(self):
         surfaces = [GhosttySurface(surface_id=0x1, cwd="/tmp/one")]
 
-        self.assertIsNone(match_tab_to_surface("~/other", surfaces))
+        self.assertEqual(
+            pair_tabs_with_surfaces(["~/other", "one"], surfaces),
+            [None, 0x1],
+        )
+
+    def test_pair_tabs_prefers_exact_path_over_basename(self):
+        surfaces = [
+            GhosttySurface(surface_id=0x1, cwd="/srv/alpha"),
+            GhosttySurface(surface_id=0x2, cwd="/home/phil/alpha"),
+        ]
+
+        # "/srv/alpha" must take its exact match even though "alpha" (a
+        # basename title) appears first in the tab list.
+        self.assertEqual(
+            pair_tabs_with_surfaces(["alpha", "/srv/alpha"], surfaces),
+            [0x2, 0x1],
+        )
 
 
 class DbusWindowMappingTests(unittest.TestCase):
