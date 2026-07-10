@@ -75,11 +75,11 @@ it does not start a headless server.
 
 ### All backends
 
-**Directory discovery** — when `~/.config/gnometerminal-tab-search/config.toml` exists, immediate child directories from the configured roots are added to the picker when they are not already open as tabs.
+**Directory discovery** — when `~/.config/gnometerminal-tab-search/config.toml` exists, immediate child directories from the configured roots are added to the picker when they are not already represented by an open tab or workspace.
 
 **Multi-window support (GNOME Terminal and Ghostty only)** — when more than one terminal window is open, tab names are prefixed with `[window-title]` to disambiguate.
 
-**Dedupe + precedence** — if a directory name exactly matches an open tab title, only the tab is shown. When multiple configured roots contain the same first-level basename, the earliest root in the config wins.
+**Dedupe + precedence** — GNOME Terminal and Ghostty match directory names to tab titles. Herdr uses the worktree checkout basename, then the first pane CWD basename, then the workspace label. When multiple configured roots contain the same first-level basename, the earliest root in the config wins.
 
 ## Optional config
 
