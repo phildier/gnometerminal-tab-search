@@ -34,7 +34,7 @@ class PickerEntry:
     directory: DirectoryEntry | None = None
 
 
-SUPPORTED_TERMINALS = ("gnome-terminal", "ghostty")
+SUPPORTED_TERMINALS = ("gnome-terminal", "ghostty", "herdr")
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,7 @@ class LauncherConfig:
     post_cd_command: str | None = None
     terminal: str = "gnome-terminal"
     ghostty_command: str = "ghostty"
+    herdr_session: str | None = None
 
 
 class ConfigError(ValueError):
@@ -107,11 +108,18 @@ def load_launcher_config(config_path: Path) -> LauncherConfig | None:
         raise ConfigError("Config 'ghostty_command' must be a string.")
     ghostty_command = str(Path(ghostty_command).expanduser())
 
+    herdr_session = data.get("herdr_session")
+    if herdr_session is not None:
+        if not isinstance(herdr_session, str) or not herdr_session.strip():
+            raise ConfigError("Config 'herdr_session' must be a non-empty string.")
+        herdr_session = herdr_session.strip()
+
     return LauncherConfig(
         roots=roots,
         post_cd_command=post_cd_command,
         terminal=terminal,
         ghostty_command=ghostty_command,
+        herdr_session=herdr_session,
     )
 
 

@@ -429,6 +429,47 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.terminal, "ghostty")
 
+    def test_terminal_accepts_herdr_with_default_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('terminal = "herdr"\n', encoding="utf-8")
+
+            config = load_launcher_config(config_path)
+
+        self.assertEqual(config.terminal, "herdr")
+        self.assertIsNone(config.herdr_session)
+
+    def test_herdr_session_reads_named_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text(
+                'terminal = "herdr"\nherdr_session = " work "\n',
+                encoding="utf-8",
+            )
+
+            config = load_launcher_config(config_path)
+
+        self.assertEqual(config.herdr_session, "work")
+
+    def test_herdr_session_rejects_non_string(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text('terminal = "herdr"\nherdr_session = 3\n', encoding="utf-8")
+
+            with self.assertRaises(ConfigError):
+                load_launcher_config(config_path)
+
+    def test_herdr_session_rejects_blank_string(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text(
+                'terminal = "herdr"\nherdr_session = "   "\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ConfigError):
+                load_launcher_config(config_path)
+
     def test_terminal_rejects_unknown_value(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.toml"
@@ -439,6 +480,7 @@ class ConfigTests(unittest.TestCase):
 
         self.assertIn("gnome-terminal", str(ctx.exception))
         self.assertIn("ghostty", str(ctx.exception))
+        self.assertIn("herdr", str(ctx.exception))
 
     def test_terminal_rejects_non_string_value(self):
         with tempfile.TemporaryDirectory() as tmp:
