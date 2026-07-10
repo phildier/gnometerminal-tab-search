@@ -30,6 +30,7 @@ from tab_search_core import (
     command_result_is_success,
     pair_tabs_with_surfaces,
     parse_dbus_window_numbers,
+    parse_herdr_snapshot,
     pick_focus_window_id,
     pick_remote_terminal_env,
 )
@@ -169,6 +170,35 @@ class GhosttyTabEntry:
     display_name: str
     raw_name: str
     surface_id: int
+
+
+class HerdrBackend:
+    """Herdr: JSON CLI workspace listing, focusing, and creation."""
+
+    def __init__(self, session=None):
+        self.session = session
+
+    def _command(self, *args):
+        command = ["herdr"]
+        if self.session is not None:
+            command.extend(["--session", self.session])
+        command.extend(args)
+        return command
+
+    def _run(self, operation, *args):
+        command = self._command(*args)
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            error = result.stderr.strip() or f"command failed: {' '.join(command)}"
+            sys.exit(f"Herdr {operation} failed: {error}")
+        return result.stdout
+
+    def get_tabs(self):
+        output = self._run("snapshot", "api", "snapshot")
+        try:
+            return parse_herdr_snapshot(output)
+        except ValueError as exc:
+            sys.exit(f"Herdr snapshot failed: {exc}")
 
 
 class GhosttyBackend:
