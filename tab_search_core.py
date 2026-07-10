@@ -27,6 +27,13 @@ class DirectoryEntry:
 
 
 @dataclass(frozen=True)
+class HerdrWorkspaceEntry:
+    display_name: str
+    raw_name: str
+    workspace_id: str
+
+
+@dataclass(frozen=True)
 class PickerEntry:
     kind: str
     display_name: str
@@ -121,6 +128,72 @@ def load_launcher_config(config_path: Path) -> LauncherConfig | None:
         ghostty_command=ghostty_command,
         herdr_session=herdr_session,
     )
+
+
+def _parse_herdr_result(output: str, expected_type: str) -> dict:
+    try:
+        payload = json.loads(output)
+        result = payload["result"]
+        if not isinstance(result, dict) or result.get("type") != expected_type:
+            raise ValueError(f"expected Herdr response type '{expected_type}'")
+        return result
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ValueError("invalid Herdr JSON response") from exc
+
+
+def parse_herdr_snapshot(output: str) -> list[HerdrWorkspaceEntry]:
+    result = _parse_herdr_result(output, "session_snapshot")
+    try:
+        snapshot = result["snapshot"]
+        workspaces = snapshot["workspaces"]
+        panes = snapshot["panes"]
+        if not isinstance(workspaces, list) or not isinstance(panes, list):
+            raise TypeError
+
+        entries = []
+        for workspace in workspaces:
+            workspace_id = workspace["workspace_id"]
+            label = workspace["label"]
+            if not isinstance(workspace_id, str) or not isinstance(label, str):
+                raise TypeError
+
+            path = None
+            worktree = workspace.get("worktree")
+            if isinstance(worktree, dict):
+                checkout_path = worktree.get("checkout_path")
+                if isinstance(checkout_path, str) and checkout_path:
+                    path = checkout_path
+
+            if path is None:
+                path = next(
+                    (
+                        pane.get("cwd")
+                        for pane in panes
+                        if isinstance(pane, dict)
+                        and pane.get("workspace_id") == workspace_id
+                        and isinstance(pane.get("cwd"), str)
+                        and pane.get("cwd")
+                    ),
+                    None,
+                )
+
+            raw_name = (Path(path).name if path else "") or label
+            entries.append(HerdrWorkspaceEntry(label, raw_name, workspace_id))
+
+        return entries
+    except (KeyError, TypeError) as exc:
+        raise ValueError("invalid Herdr session snapshot") from exc
+
+
+def parse_herdr_workspace_created(output: str) -> str:
+    result = _parse_herdr_result(output, "workspace_created")
+    try:
+        pane_id = result["root_pane"]["pane_id"]
+        if not isinstance(pane_id, str) or not pane_id:
+            raise TypeError
+        return pane_id
+    except (KeyError, TypeError) as exc:
+        raise ValueError("invalid Herdr workspace creation response") from exc
 
 
 def build_picker_entries(tabs: list[TabEntry], directories: list[DirectoryEntry]) -> list[PickerEntry]:

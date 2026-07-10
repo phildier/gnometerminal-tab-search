@@ -6,6 +6,7 @@ from tab_search_core import (
     ConfigError,
     DirectoryEntry,
     GhosttySurface,
+    HerdrWorkspaceEntry,
     LauncherConfig,
     TabEntry,
     assign_dbus_window_paths,
@@ -21,6 +22,8 @@ from tab_search_core import (
     load_launcher_config,
     pair_tabs_with_surfaces,
     parse_dbus_window_numbers,
+    parse_herdr_snapshot,
+    parse_herdr_workspace_created,
     pick_focus_window_id,
     pick_remote_terminal_env,
 )
@@ -369,6 +372,74 @@ class DbusWindowMappingTests(unittest.TestCase):
         paths = assign_dbus_window_paths(1, [])
 
         self.assertEqual(paths, ["/org/gnome/Terminal/window/1"])
+
+
+class HerdrResponseTests(unittest.TestCase):
+    def test_snapshot_uses_worktree_checkout_path_for_dedupe(self):
+        output = """{
+          "result": {
+            "type": "session_snapshot",
+            "snapshot": {
+              "workspaces": [{
+                "workspace_id": "w1",
+                "label": "API work",
+                "worktree": {"checkout_path": "/tmp/checkouts/api-branch"}
+              }],
+              "panes": [{"workspace_id": "w1", "cwd": "/tmp/original"}]
+            }
+          }
+        }"""
+
+        self.assertEqual(
+            parse_herdr_snapshot(output),
+            [HerdrWorkspaceEntry("API work", "api-branch", "w1")],
+        )
+
+    def test_snapshot_falls_back_to_first_pane_cwd_then_label(self):
+        output = """{
+          "result": {
+            "type": "session_snapshot",
+            "snapshot": {
+              "workspaces": [
+                {"workspace_id": "w1", "label": "Renamed"},
+                {"workspace_id": "w2", "label": "Label fallback"}
+              ],
+              "panes": [
+                {"workspace_id": "w1", "cwd": "/tmp/first"},
+                {"workspace_id": "w1", "cwd": "/tmp/second"},
+                {"workspace_id": "w2", "cwd": null}
+              ]
+            }
+          }
+        }"""
+
+        self.assertEqual(
+            parse_herdr_snapshot(output),
+            [
+                HerdrWorkspaceEntry("Renamed", "first", "w1"),
+                HerdrWorkspaceEntry("Label fallback", "Label fallback", "w2"),
+            ],
+        )
+
+    def test_snapshot_rejects_malformed_response(self):
+        for output in ("not json", '{"result":{"type":"ok"}}'):
+            with self.subTest(output=output):
+                with self.assertRaises(ValueError):
+                    parse_herdr_snapshot(output)
+
+    def test_workspace_created_returns_root_pane_id(self):
+        output = """{
+          "result": {
+            "type": "workspace_created",
+            "root_pane": {"pane_id": "w2:p1"}
+          }
+        }"""
+
+        self.assertEqual(parse_herdr_workspace_created(output), "w2:p1")
+
+    def test_workspace_created_rejects_missing_root_pane(self):
+        with self.assertRaises(ValueError):
+            parse_herdr_workspace_created('{"result":{"type":"workspace_created"}}')
 
 
 class ConfigTests(unittest.TestCase):
