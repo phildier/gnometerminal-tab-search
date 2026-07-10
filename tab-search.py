@@ -1,4 +1,4 @@
-"""Fuzzy tab switcher + directory launcher for GNOME Terminal and Ghostty."""
+"""Fuzzy workspace/tab switcher and directory launcher for supported terminals."""
 
 import html
 import subprocess
@@ -11,12 +11,14 @@ from tab_search_core import (
     discover_first_level_directories,
     load_launcher_config,
 )
-from terminal_backends import GhosttyBackend, GnomeTerminalBackend
+from terminal_backends import GhosttyBackend, GnomeTerminalBackend, HerdrBackend
 
 
 def create_backend(launcher_config):
     if launcher_config is not None and launcher_config.terminal == 'ghostty':
         return GhosttyBackend(ghostty_command=launcher_config.ghostty_command)
+    if launcher_config is not None and launcher_config.terminal == 'herdr':
+        return HerdrBackend(session=launcher_config.herdr_session)
     return GnomeTerminalBackend()
 
 

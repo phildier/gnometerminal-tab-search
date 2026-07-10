@@ -230,6 +230,31 @@ class CreateBackendTests(unittest.TestCase):
 
         self.assertEqual(backend.ghostty_command, "/opt/ghostty/bin/ghostty")
 
+    def test_herdr_config_uses_herdr(self):
+        from tab_search_core import LauncherConfig
+
+        backends, module = load_modules()
+        config = LauncherConfig(roots=[Path("/tmp")], terminal="herdr")
+
+        backend = module.create_backend(config)
+
+        self.assertIsInstance(backend, backends.HerdrBackend)
+        self.assertIsNone(backend.session)
+
+    def test_herdr_backend_receives_configured_session(self):
+        from tab_search_core import LauncherConfig
+
+        backends, module = load_modules()
+        config = LauncherConfig(
+            roots=[Path("/tmp")],
+            terminal="herdr",
+            herdr_session="work",
+        )
+
+        backend = module.create_backend(config)
+
+        self.assertEqual(backend.session, "work")
+
 
 def module_tab_entry(module, name):
     from tab_search_core import TabEntry

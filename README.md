@@ -1,10 +1,10 @@
 # gnometerminal-tab-search
 
-A keyboard-triggered fuzzy tab switcher + directory launcher for GNOME Terminal and Ghostty. Press a hotkey from anywhere on the desktop and one rofi fuzzy-search popup lists open terminal tabs plus unopened first-level directories from your configured roots.
+A keyboard-triggered fuzzy workspace/tab switcher + directory launcher for GNOME Terminal, Ghostty, and Herdr. Press a hotkey from anywhere on the desktop and one rofi fuzzy-search popup lists open terminal tabs or Herdr workspaces plus unopened first-level directories from your configured roots.
 
 ## How it works
 
-The terminal backend is selected by the optional `terminal` config key (`gnome-terminal` is the default; `ghostty` is supported).
+The terminal backend is selected by the optional `terminal` config key (`gnome-terminal` is the default; `ghostty` and `herdr` are supported).
 
 ### GNOME Terminal backend
 
@@ -55,7 +55,25 @@ WantedBy=graphical-session.target
 
 then `systemctl --user daemon-reload`. Pair it with a user-level desktop entry (`~/.local/share/applications/com.mitchellh.ghostty.desktop`, copied from the system one) whose `Exec`/`TryExec` point at the same binary, keeping `DBusActivatable=true`.
 
-### Both backends
+### Herdr backend
+
+**Requires Herdr 0.7.3 or newer** and a running default or named session.
+
+**Workspace enumeration** - `herdr api snapshot` supplies workspace labels,
+stable IDs, worktree checkout paths, and pane working directories as JSON.
+
+**Workspace switching** - `herdr workspace focus <id>` selects the workspace,
+then `xdotool` activates a dedicated top-level window whose exact title is
+`herdr`. A Herdr client nested in an arbitrary terminal tab and multiple Herdr
+client windows are not currently supported.
+
+**Directory launch** - `herdr workspace create --cwd <directory> --label
+<basename> --focus` creates and focuses a workspace. A nonblank
+`post_cd_command` is then run in the new root pane through `bash -ic`.
+The launcher reports an error when the configured Herdr session is not running;
+it does not start a headless server.
+
+### All backends
 
 **Directory discovery** — when `~/.config/gnometerminal-tab-search/config.toml` exists, immediate child directories from the configured roots are added to the picker when they are not already open as tabs.
 
@@ -68,8 +86,9 @@ then `systemctl --user daemon-reload`. Pair it with a user-level desktop entry (
 If `~/.config/gnometerminal-tab-search/config.toml` is missing, the tool behaves as a GNOME Terminal tab switcher only.
 
 ```toml
-terminal = "ghostty"                                    # optional; default "gnome-terminal"
+terminal = "herdr"                                     # gnome-terminal, ghostty, or herdr
 ghostty_command = "~/.local/ghostty-head/bin/ghostty"   # optional; default "ghostty"
+herdr_session = "work"                                 # optional; omit for Herdr's default session
 
 roots = [
   "~/pmg",
@@ -81,8 +100,9 @@ post_cd_command = "my_shell_function"
 
 Rules:
 
-- `terminal` selects the backend: `gnome-terminal` (default) or `ghostty`.
+- `terminal` selects the backend: `gnome-terminal` (default), `ghostty`, or `herdr`.
 - `ghostty_command` points directory launches at a specific Ghostty binary — useful when a self-built Ghostty is not on the hotkey environment's PATH. `~` is expanded.
+- `herdr_session` selects a named running Herdr session. Omit it to use Herdr's default session.
 - `roots` is optional; when absent it defaults to your home directory. It is ordered; earlier roots take precedence and later duplicate basenames are dropped.
 - `post_cd_command` is optional.
 - `post_cd_command` is bash-only and is executed after changing into the launched directory.
@@ -99,6 +119,7 @@ Rules:
 - `libglib2.0-bin` (provides `gdbus`)
 - Python 3.11 or later with `gi` importable (3.11+ needed for config parsing via `tomllib`)
 - For the Ghostty backend with tab switching: a Ghostty build newer than 1.3.1 (self-built from HEAD until released). Ghostty installation is not managed by `install.sh`.
+- For the Herdr backend: Herdr 0.7.3 or newer. Herdr installation is not managed by `install.sh`.
 
 ## Installation
 
@@ -140,7 +161,7 @@ gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/or
 |---|---|
 | `tab-search` | Shell wrapper — entry point, finds a Python with `gi` available |
 | `tab-search.py` | Runtime orchestration — config load, backend selection, rofi picker |
-| `terminal_backends.py` | Backend implementations — GNOME Terminal and Ghostty (AT-SPI, D-Bus, launching) |
+| `terminal_backends.py` | Backend implementations — GNOME Terminal, Ghostty, and Herdr (AT-SPI, D-Bus, CLI integration, launching) |
 | `tab_search_core.py` | Pure core — data model, config parsing, command builders, matching helpers |
 | `install.sh` | Installs apt dependencies and registers the GNOME keyboard shortcut |
 
