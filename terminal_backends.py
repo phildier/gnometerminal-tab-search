@@ -8,6 +8,7 @@ Backends share a duck-typed interface:
 """
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -19,8 +20,10 @@ from gi.repository import Atspi
 from dataclasses import dataclass
 
 from tab_search_core import (
+    HerdrWorkspaceEntry,
     TabEntry,
     assign_dbus_window_paths,
+    build_cd_script,
     build_ghostty_launch_command,
     build_ghostty_new_tab_arguments,
     build_gnome_terminal_commands,
@@ -31,6 +34,7 @@ from tab_search_core import (
     pair_tabs_with_surfaces,
     parse_dbus_window_numbers,
     parse_herdr_snapshot,
+    parse_herdr_workspace_created,
     pick_focus_window_id,
     pick_remote_terminal_env,
 )
@@ -199,6 +203,52 @@ class HerdrBackend:
             return parse_herdr_snapshot(output)
         except ValueError as exc:
             sys.exit(f"Herdr snapshot failed: {exc}")
+
+    def switch_tab(self, workspace):
+        self._run("focus workspace", "workspace", "focus", workspace.workspace_id)
+        self._focus_window()
+
+    def open_directory(self, directory, post_cd_command=None):
+        output = self._run(
+            "create workspace",
+            "workspace",
+            "create",
+            "--cwd",
+            str(directory),
+            "--label",
+            directory.name,
+            "--focus",
+        )
+        try:
+            root_pane_id = parse_herdr_workspace_created(output)
+        except ValueError as exc:
+            sys.exit(f"Herdr create workspace failed: {exc}")
+
+        if post_cd_command:
+            script = build_cd_script(directory, post_cd_command)
+            command = shlex.join(["bash", "-ic", script])
+            self._run("run post command", "pane", "run", root_pane_id, command)
+
+        self._focus_window()
+
+    def _focus_window(self):
+        search = subprocess.run(
+            ["xdotool", "search", "--name", "^herdr$"],
+            capture_output=True,
+            text=True,
+        )
+        window_ids = search.stdout.splitlines() if search.returncode == 0 else []
+        if not window_ids:
+            sys.exit("Could not focus Herdr window: no exact-title 'herdr' window found.")
+
+        activate = subprocess.run(
+            ["xdotool", "windowactivate", "--sync", window_ids[0]],
+            capture_output=True,
+            text=True,
+        )
+        if activate.returncode != 0:
+            error = activate.stderr.strip() or "xdotool windowactivate failed"
+            sys.exit(f"Could not focus Herdr window: {error}")
 
 
 class GhosttyBackend:
