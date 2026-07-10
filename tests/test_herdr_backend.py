@@ -30,6 +30,22 @@ SNAPSHOT = """{
   }
 }"""
 
+FOCUS_RESPONSE = """{
+  "result": {
+    "type": "workspace_info",
+    "workspace": {"workspace_id": "w1", "label": "alpha"}
+  }
+}"""
+
+CREATE_RESPONSE = """{
+  "result": {
+    "type": "workspace_created",
+    "root_pane": {"pane_id": "w2:p1"}
+  }
+}"""
+
+OK_RESPONSE = '{"result":{"type":"ok"}}'
+
 
 class HerdrGetTabsTests(unittest.TestCase):
     def test_default_session_uses_snapshot_cli(self):
@@ -72,6 +88,19 @@ class HerdrGetTabsTests(unittest.TestCase):
 
         self.assertIn("snapshot", str(ctx.exception))
 
+    def test_missing_herdr_executable_during_snapshot_is_fatal(self):
+        backends = load_backends()
+        with patch.object(
+            backends.subprocess,
+            "run",
+            side_effect=FileNotFoundError(2, "No such file or directory", "herdr"),
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                backends.HerdrBackend().get_tabs()
+
+        self.assertIn("snapshot", str(ctx.exception))
+        self.assertIn("herdr", str(ctx.exception))
+
 
 class HerdrActionTests(unittest.TestCase):
     def test_switch_workspace_focuses_workspace_then_dedicated_window(self):
@@ -81,15 +110,18 @@ class HerdrActionTests(unittest.TestCase):
 
         def fake_run(command, **kwargs):
             calls.append(command)
-            if command == ["xdotool", "search", "--name", "^herdr$"]:
+            if command == ["xdotool", "search", "--maxdepth", "1", "--name", "^herdr$"]:
                 return result(stdout="123\n")
-            return result(stdout='{"result":{"type":"ok"}}')
+            return result(stdout=FOCUS_RESPONSE)
 
         with patch.object(backends.subprocess, "run", side_effect=fake_run):
             backends.HerdrBackend(session="work").switch_tab(workspace)
 
         self.assertEqual(calls[0], ["herdr", "--session", "work", "workspace", "focus", "w1"])
-        self.assertEqual(calls[1], ["xdotool", "search", "--name", "^herdr$"])
+        self.assertEqual(
+            calls[1],
+            ["xdotool", "search", "--maxdepth", "1", "--name", "^herdr$"],
+        )
         self.assertEqual(calls[2], ["xdotool", "windowactivate", "--sync", "123"])
 
     def test_switch_workspace_fails_when_window_is_missing(self):
@@ -98,7 +130,7 @@ class HerdrActionTests(unittest.TestCase):
 
         def fake_run(command, **kwargs):
             if command[0] == "herdr":
-                return result(stdout='{"result":{"type":"ok"}}')
+                return result(stdout=FOCUS_RESPONSE)
             return result(returncode=1, stderr="not found")
 
         with patch.object(backends.subprocess, "run", side_effect=fake_run):
@@ -113,8 +145,8 @@ class HerdrActionTests(unittest.TestCase):
 
         def fake_run(command, **kwargs):
             if command[0] == "herdr":
-                return result(stdout='{"result":{"type":"ok"}}')
-            if command == ["xdotool", "search", "--name", "^herdr$"]:
+                return result(stdout=FOCUS_RESPONSE)
+            if command == ["xdotool", "search", "--maxdepth", "1", "--name", "^herdr$"]:
                 return result(stdout="123\n")
             return result(returncode=1, stderr="activation denied")
 
@@ -124,6 +156,36 @@ class HerdrActionTests(unittest.TestCase):
 
         self.assertIn("activation denied", str(ctx.exception))
 
+    def test_switch_workspace_rejects_malformed_focus_response(self):
+        backends = load_backends()
+        workspace = backends.HerdrWorkspaceEntry("alpha", "alpha", "w1")
+
+        with patch.object(
+            backends.subprocess,
+            "run",
+            return_value=result(stdout=OK_RESPONSE),
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                backends.HerdrBackend().switch_tab(workspace)
+
+        self.assertIn("focus workspace", str(ctx.exception))
+
+    def test_switch_workspace_fails_when_xdotool_is_missing(self):
+        backends = load_backends()
+        workspace = backends.HerdrWorkspaceEntry("alpha", "alpha", "w1")
+
+        def fake_run(command, **kwargs):
+            if command[0] == "herdr":
+                return result(stdout=FOCUS_RESPONSE)
+            raise FileNotFoundError(2, "No such file or directory", "xdotool")
+
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            with self.assertRaises(SystemExit) as ctx:
+                backends.HerdrBackend().switch_tab(workspace)
+
+        self.assertIn("focus Herdr window", str(ctx.exception))
+        self.assertIn("xdotool", str(ctx.exception))
+
     def test_create_workspace_without_post_command(self):
         backends = load_backends()
         calls = []
@@ -131,8 +193,8 @@ class HerdrActionTests(unittest.TestCase):
         def fake_run(command, **kwargs):
             calls.append(command)
             if command[:2] == ["herdr", "workspace"]:
-                return result(stdout='{"result":{"type":"workspace_created","root_pane":{"pane_id":"w2:p1"}}}')
-            if command == ["xdotool", "search", "--name", "^herdr$"]:
+                return result(stdout=CREATE_RESPONSE)
+            if command == ["xdotool", "search", "--maxdepth", "1", "--name", "^herdr$"]:
                 return result(stdout="123\n")
             return result()
 
@@ -152,8 +214,10 @@ class HerdrActionTests(unittest.TestCase):
         def fake_run(command, **kwargs):
             calls.append(command)
             if command[:2] == ["herdr", "workspace"]:
-                return result(stdout='{"result":{"type":"workspace_created","root_pane":{"pane_id":"w2:p1"}}}')
-            if command == ["xdotool", "search", "--name", "^herdr$"]:
+                return result(stdout=CREATE_RESPONSE)
+            if command[:3] == ["herdr", "pane", "run"]:
+                return result(stdout=OK_RESPONSE)
+            if command == ["xdotool", "search", "--maxdepth", "1", "--name", "^herdr$"]:
                 return result(stdout="123\n")
             return result()
 
@@ -171,22 +235,50 @@ class HerdrActionTests(unittest.TestCase):
             calls,
         )
 
-    def test_create_workspace_does_nothing_for_blank_post_command(self):
+    def test_create_workspace_does_nothing_for_whitespace_only_post_command(self):
         backends = load_backends()
         calls = []
 
         def fake_run(command, **kwargs):
             calls.append(command)
             if command[:2] == ["herdr", "workspace"]:
-                return result(stdout='{"result":{"type":"workspace_created","root_pane":{"pane_id":"w2:p1"}}}')
-            if command == ["xdotool", "search", "--name", "^herdr$"]:
+                return result(stdout=CREATE_RESPONSE)
+            if command == ["xdotool", "search", "--maxdepth", "1", "--name", "^herdr$"]:
                 return result(stdout="123\n")
             return result()
 
         with patch.object(backends.subprocess, "run", side_effect=fake_run):
-            backends.HerdrBackend().open_directory(Path("/tmp/alpha"), "")
+            backends.HerdrBackend().open_directory(Path("/tmp/alpha"), "   ")
 
         self.assertFalse(any(command[:3] == ["herdr", "pane", "run"] for command in calls))
+
+    def test_create_workspace_rejects_malformed_root_pane(self):
+        backends = load_backends()
+        malformed = '{"result":{"type":"workspace_created","root_pane":{"pane_id":"   "}}}'
+
+        with patch.object(
+            backends.subprocess,
+            "run",
+            return_value=result(stdout=malformed),
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                backends.HerdrBackend().open_directory(Path("/tmp/alpha"))
+
+        self.assertIn("create workspace", str(ctx.exception))
+
+    def test_create_workspace_rejects_malformed_post_command_response(self):
+        backends = load_backends()
+
+        def fake_run(command, **kwargs):
+            if command[:2] == ["herdr", "workspace"]:
+                return result(stdout=CREATE_RESPONSE)
+            return result(stdout=FOCUS_RESPONSE)
+
+        with patch.object(backends.subprocess, "run", side_effect=fake_run):
+            with self.assertRaises(SystemExit) as ctx:
+                backends.HerdrBackend().open_directory(Path("/tmp/alpha"), "my_function")
+
+        self.assertIn("run post command", str(ctx.exception))
 
     def test_create_workspace_propagates_cli_failure(self):
         backends = load_backends()

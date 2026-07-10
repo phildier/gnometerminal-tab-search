@@ -187,6 +187,18 @@ class MainFlowTests(unittest.TestCase):
 
         discover_directories.assert_called_once_with(config.roots)
 
+    def test_main_does_not_swallow_herdr_system_exit_during_enumeration(self):
+        _, module = load_modules()
+        backend = self.make_backend([])
+        backend.get_tabs.side_effect = SystemExit("Herdr snapshot failed: missing executable")
+
+        with patch.object(module, "create_backend", return_value=backend):
+            with patch.object(module, "load_launcher_config", return_value=None):
+                with self.assertRaises(SystemExit) as ctx:
+                    module.main()
+
+        self.assertIn("Herdr snapshot failed", str(ctx.exception))
+
 
 class CreateBackendTests(unittest.TestCase):
     def test_no_config_uses_gnome_terminal(self):

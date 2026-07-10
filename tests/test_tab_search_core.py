@@ -427,6 +427,21 @@ class HerdrResponseTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     parse_herdr_snapshot(output)
 
+    def test_snapshot_rejects_malformed_nested_consumed_fields(self):
+        malformed_snapshots = [
+            '{"result":{"type":"session_snapshot","snapshot":[]}}',
+            '{"result":{"type":"session_snapshot","snapshot":{"workspaces":[null],"panes":[]}}}',
+            '{"result":{"type":"session_snapshot","snapshot":{"workspaces":[{"workspace_id":"","label":"alpha"}],"panes":[]}}}',
+            '{"result":{"type":"session_snapshot","snapshot":{"workspaces":[{"workspace_id":"w1","label":"   "}],"panes":[]}}}',
+            '{"result":{"type":"session_snapshot","snapshot":{"workspaces":[{"workspace_id":"w1","label":"alpha","worktree":[]}],"panes":[]}}}',
+            '{"result":{"type":"session_snapshot","snapshot":{"workspaces":[{"workspace_id":"w1","label":"alpha"}],"panes":[{"workspace_id":"w1","cwd":7}]}}}',
+        ]
+
+        for output in malformed_snapshots:
+            with self.subTest(output=output):
+                with self.assertRaises(ValueError):
+                    parse_herdr_snapshot(output)
+
     def test_workspace_created_returns_root_pane_id(self):
         output = """{
           "result": {

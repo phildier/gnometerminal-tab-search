@@ -112,7 +112,7 @@ Rules:
 
 ## Requirements
 
-- Ubuntu 24.04 or any GNOME desktop on X11, with GNOME Terminal and/or Ghostty
+- Ubuntu 24.04 or any GNOME desktop on X11, with an X11 terminal window for the selected backend
 - `rofi` (fuzzy picker UI)
 - `python3-gi` and `gir1.2-atspi-2.0` (AT-SPI Python bindings)
 - `xdotool` (window focus)

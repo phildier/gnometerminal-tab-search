@@ -33,8 +33,10 @@ from tab_search_core import (
     command_result_is_success,
     pair_tabs_with_surfaces,
     parse_dbus_window_numbers,
+    parse_herdr_pane_run,
     parse_herdr_snapshot,
     parse_herdr_workspace_created,
+    parse_herdr_workspace_focused,
     pick_focus_window_id,
     pick_remote_terminal_env,
 )
@@ -191,7 +193,10 @@ class HerdrBackend:
 
     def _run(self, operation, *args):
         command = self._command(*args)
-        result = subprocess.run(command, capture_output=True, text=True)
+        try:
+            result = subprocess.run(command, capture_output=True, text=True)
+        except OSError as exc:
+            sys.exit(f"Herdr {operation} failed: could not run herdr: {exc}")
         if result.returncode != 0:
             error = result.stderr.strip() or f"command failed: {' '.join(command)}"
             sys.exit(f"Herdr {operation} failed: {error}")
@@ -205,7 +210,11 @@ class HerdrBackend:
             sys.exit(f"Herdr snapshot failed: {exc}")
 
     def switch_tab(self, workspace):
-        self._run("focus workspace", "workspace", "focus", workspace.workspace_id)
+        output = self._run("focus workspace", "workspace", "focus", workspace.workspace_id)
+        try:
+            parse_herdr_workspace_focused(output)
+        except ValueError as exc:
+            sys.exit(f"Herdr focus workspace failed: {exc}")
         self._focus_window()
 
     def open_directory(self, directory, post_cd_command=None):
@@ -224,28 +233,38 @@ class HerdrBackend:
         except ValueError as exc:
             sys.exit(f"Herdr create workspace failed: {exc}")
 
-        if post_cd_command:
+        if post_cd_command and post_cd_command.strip():
             script = build_cd_script(directory, post_cd_command)
             command = shlex.join(["bash", "-ic", script])
-            self._run("run post command", "pane", "run", root_pane_id, command)
+            output = self._run("run post command", "pane", "run", root_pane_id, command)
+            try:
+                parse_herdr_pane_run(output)
+            except ValueError as exc:
+                sys.exit(f"Herdr run post command failed: {exc}")
 
         self._focus_window()
 
     def _focus_window(self):
-        search = subprocess.run(
-            ["xdotool", "search", "--name", "^herdr$"],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            search = subprocess.run(
+                ["xdotool", "search", "--maxdepth", "1", "--name", "^herdr$"],
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            sys.exit(f"Could not focus Herdr window: could not run xdotool: {exc}")
         window_ids = search.stdout.splitlines() if search.returncode == 0 else []
         if not window_ids:
             sys.exit("Could not focus Herdr window: no exact-title 'herdr' window found.")
 
-        activate = subprocess.run(
-            ["xdotool", "windowactivate", "--sync", window_ids[0]],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            activate = subprocess.run(
+                ["xdotool", "windowactivate", "--sync", window_ids[0]],
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            sys.exit(f"Could not focus Herdr window: could not run xdotool: {exc}")
         if activate.returncode != 0:
             error = activate.stderr.strip() or "xdotool windowactivate failed"
             sys.exit(f"Could not focus Herdr window: {error}")
