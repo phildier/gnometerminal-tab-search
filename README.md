@@ -77,7 +77,7 @@ it does not start a headless server.
 
 **Directory discovery** — when `~/.config/gnometerminal-tab-search/config.toml` exists, immediate child directories from the configured roots are added to the picker when they are not already open as tabs.
 
-**Multi-window support** — when more than one terminal window is open, tab names are prefixed with `[window-title]` to disambiguate.
+**Multi-window support (GNOME Terminal and Ghostty only)** — when more than one terminal window is open, tab names are prefixed with `[window-title]` to disambiguate.
 
 **Dedupe + precedence** — if a directory name exactly matches an open tab title, only the tab is shown. When multiple configured roots contain the same first-level basename, the earliest root in the config wins.
 
